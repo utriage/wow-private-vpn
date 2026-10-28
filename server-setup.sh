@@ -4,24 +4,34 @@
 # ===================================================================
 set -e
 
-echo "=== 1. パッケージ更新 & WireGuard インストール ==="
+echo "=== 1. パッケージ更新 & 必須ツールインストール ==="
+export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update
-sudo apt-get install -y wireguard qrencode iptables
+sudo apt-get install -y wireguard qrencode iptables iptables-persistent
 
 echo "=== 2. IPフォワーディング (パケット転送) の有効化 ==="
 sudo sysctl -w net.ipv4.ip_forward=1
-echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+if ! grep -q "net.ipv4.ip_forward=1" /etc/sysctl.conf; then
+    echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+fi
 
 echo "=== 3. 鍵ペアの生成 ==="
+sudo mkdir -p /etc/wireguard
 cd /etc/wireguard
-umask 077
-wg genkey | tee server_private.key | wg pubkey > server_public.key
-wg genkey | tee client_private.key | wg pubkey > client_public.key
+sudo umask 077
 
-SERVER_PRIV=$(cat server_private.key)
-SERVER_PUB=$(cat server_public.key)
-CLIENT_PRIV=$(cat client_private.key)
-CLIENT_PUB=$(cat client_public.key)
+if [ ! -f "server_private.key" ]; then
+    wg genkey | sudo tee server_private.key | wg pubkey | sudo tee server_public.key > /dev/null
+fi
+
+if [ ! -f "client_private.key" ]; then
+    wg genkey | sudo tee client_private.key | wg pubkey | sudo tee client_public.key > /dev/null
+fi
+
+SERVER_PRIV=$(sudo cat server_private.key)
+SERVER_PUB=$(sudo cat server_public.key)
+CLIENT_PRIV=$(sudo cat client_private.key)
+CLIENT_PUB=$(sudo cat client_public.key)
 
 # デフォルトのネットワークインターフェース名を取得 (eth0, ens5 等)
 NET_IF=$(ip route get 8.8.8.8 | awk -- '{print $5}')
@@ -38,8 +48,8 @@ PrivateKey = ${SERVER_PRIV}
 PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${NET_IF} -j MASQUERADE
 PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ${NET_IF} -j MASQUERADE
 
+# --- 管理者 / PoC 1台目 ---
 [Peer]
-# クライアント (PoC用 1台目)
 PublicKey = ${CLIENT_PUB}
 AllowedIPs = 10.0.0.2/32
 EOF
@@ -48,12 +58,20 @@ echo "=== 5. WireGuard サービスの起動 & 自動起動有効化 ==="
 sudo systemctl enable wg-quick@wg0
 sudo systemctl restart wg-quick@wg0
 
+# 管理者用クライアント設定ファイルを出力
+sudo mkdir -p /etc/wireguard/clients
+sudo chmod 700 /etc/wireguard/clients
+
 echo ""
 echo "==================================================================="
-echo " ★ セットアップが完了しました！"
-echo " 以下の値をローカルの wow-poc.conf に反映してください："
+echo " ★ WireGuard サーバーのセットアップが完了しました！"
 echo "==================================================================="
 echo "SERVER_PUBLIC_IP  : ${SERVER_IP}"
 echo "SERVER_PUBLIC_KEY : ${SERVER_PUB}"
-echo "CLIENT_PRIVATE_KEY: ${CLIENT_PRIV}"
+echo "ADMIN_CLIENT_KEY  : ${CLIENT_PRIV}"
+echo "ADMIN_VPN_IP      : 10.0.0.2/32"
+echo "==================================================================="
+echo "【ギルドメンバーの追加方法】"
+echo " 新規メンバーを追加する際は、以下のコマンドを実行してください："
+echo "   sudo ./scripts/add_member.sh <メンバー名> <末尾IP (3〜254)>"
 echo "==================================================================="

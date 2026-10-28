@@ -1,0 +1,18 @@
+# AWS CLI プロファイル名 (ローカル認証情報)
+aws_profile = "wow-vpn"
+
+# 東京 (入口) サーバー設定
+primary_region = "ap-northeast-1"
+primary_az     = "ap-northeast-1a"
+
+# オレゴン (出口) サーバー設定
+enable_oregon = true
+oregon_region = "us-west-2"
+oregon_az     = "us-west-2a"
+
+# インスタンススペック (nano_3_0: $3.50/月, micro_3_0: $5.00/月)
+bundle_id    = "nano_3_0"
+blueprint_id = "ubuntu_24_04"
+
+# SSHアクセス制限 (管理者のグローバルIP/32を指定することを推奨)
+# allowed_ssh_cidrs = ["203.0.113.10/32"]

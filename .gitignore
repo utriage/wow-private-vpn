@@ -7,8 +7,35 @@ __pycache__/
 # Temporary SSH keys & auth
 id_*
 *.pub
+*.key
+*.priv
 auth_code.txt
 *.tmp
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+!terraform.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# WireGuard keys & generated client configs
+server_*.key
+client_*.key
+*.conf
+!*.template.conf
+!*.sample.conf
+
+# Generated files / exports
+generated/
+build/
+dist/
 
 # OS / Editor
 .DS_Store
