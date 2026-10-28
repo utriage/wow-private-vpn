@@ -98,23 +98,18 @@ async function main() {
         }
     }
 
-    // 2. 既存の wow_routes.tf から CIDR を読み込み
-    const wowRoutesFile = path.join(baseDir, "terraform", "wow_routes.tf");
-    let existingCidrs = [];
-    if (fs.existsSync(wowRoutesFile)) {
-        const tfContent = fs.readFileSync(wowRoutesFile, "utf-8");
-        const matches = [...tfContent.matchAll(/"(\d+\.\d+\.\d+\.\d+\/\d+)"/g)];
-        existingCidrs = matches.map((m) => m[1]);
-    }
-    console.log(`* 既存の定義数: ${existingCidrs.length} 件`);
+    // 2. 外部CDN (Akamai/Cloudflare等) の細切れプレフィックスを除外し、
+    //    純粋な Blizzard 自社 AS (AS57976, AS393278) のプレフィックスと Supernet のみから集約
+    console.log(`* 外部CDN混入を排除し、純粋な Blizzard 自社ゲーム帯域のみを対象とします。`);
 
     // 3. 全プレフィックスを結合して集約 (Supernetting)
-    const combined = [...BLIZZARD_SUPERNETS, ...fetchedCidrs, ...existingCidrs];
+    const combined = [...BLIZZARD_SUPERNETS, ...fetchedCidrs];
     const consolidated = aggregateCidrs(combined);
 
-    console.log(`* 集約後の有効 CIDR 数: ${consolidated.length} 件 (細切れサブネットを包括集約)`);
+    console.log(`* 集約後の有効 CIDR 数: ${consolidated.length} 件 (純粋な Blizzard ゲーム帯域に凝縮)`);
 
     // 4. terraform/wow_routes.tf の更新
+    const wowRoutesFile = path.join(baseDir, "terraform", "wow_routes.tf");
     let newTfContent = `# ===================================================================\n`;
     newTfContent += `# World of Warcraft / Blizzard 主要ネットワーク帯域 (CIDR リスト)\n`;
     newTfContent += `# scripts/update-blizzard-routes.mjs により BGP 広報データから自動同期・集約\n`;
