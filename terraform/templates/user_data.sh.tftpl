@@ -21,10 +21,13 @@ chmod 700 /etc/wireguard
 # ===================================================================
 # Blizzard / WoW 宛先用 ipset (ハッシュセット) の構築
 # ===================================================================
+# Lightsail の 16KB user_data 制限対策として Base64 Gzip 圧縮された CIDR を展開
+echo "${compressed_wow_cidrs}" | base64 -d | gzip -d > /tmp/wow_cidrs.txt
+
 ipset create wow_targets hash:net -exist
-%{ for cidr in allowed_dest_cidrs ~}
-ipset add wow_targets ${cidr} -exist
-%{ endfor ~}
+while read -r cidr; do
+    [ -n "$cidr" ] && ipset add wow_targets "$cidr" -exist
+done < /tmp/wow_cidrs.txt
 
 mkdir -p /etc/iptables
 ipset save -file /etc/iptables/ipsets
@@ -121,6 +124,13 @@ PersistentKeepalive = ${peer.persistent_keepalive}
 %{ endfor ~}
 EOF
 
+# __WOW_ROUTES__ プレースホルダーが存在する場合は展開した CIDR リストで置換
+if grep -q "__WOW_ROUTES__" /etc/wireguard/wg0.conf; then
+    WOW_JOINED_CIDRS=$(paste -sd, /tmp/wow_cidrs.txt)
+    sed -i "s|__WOW_ROUTES__|10.0.1.0/24, $WOW_JOINED_CIDRS|g" /etc/wireguard/wg0.conf
+fi
+rm -f /tmp/wow_cidrs.txt
+
 chmod 600 /etc/wireguard/wg0.conf
 
 # サービスの起動 & 自動起動登録
@@ -131,29 +141,54 @@ systemctl enable --now wg-quick@wg0
 # ===================================================================
 WEBHOOK_URL="${discord_webhook_url}"
 GATEWAY_NAME="${gateway_name}"
+GATEWAY_ROLE="${gateway_role}"
+USER_COUNT="${user_count}"
+BACKBONE_NAME="${backbone_name}"
+BACKBONE_PUBKEY="${backbone_pubkey}"
 
 if [ -n "$WEBHOOK_URL" ]; then
-    PEER_COUNT="${length(peers)}"
-
     # 1. 起動完了通知の送信
-    PAYLOAD=$(jq -n \
-        --arg name "$GATEWAY_NAME" \
-        --arg ip "$SERVER_IP" \
-        --arg pubkey "$SERVER_PUB" \
-        --arg peers "$PEER_COUNT" \
-        '{
-            embeds: [{
-                title: ("🚀 " + $name + " が起動完了しました"),
-                color: 5814783,
-                fields: [
-                    { name: "Public IP", value: $ip, inline: true },
-                    { name: "登録Peer数", value: ($peers + " 名"), inline: true },
-                    { name: "WG Public Key", value: ("`" + $pubkey + "`") }
-                ],
-                footer: { text: "WoW Private VPN • SSH完全遮断 (Immutable)" },
-                timestamp: (now | todate)
-            }]
-        }')
+    if [ "$GATEWAY_ROLE" = "entry" ]; then
+        PAYLOAD=$(jq -n \
+            --arg name "$GATEWAY_NAME" \
+            --arg ip "$SERVER_IP" \
+            --arg pubkey "$SERVER_PUB" \
+            --arg users "$USER_COUNT" \
+            --arg backbone "$BACKBONE_NAME" \
+            '{
+                embeds: [{
+                    title: ("🚀 " + $name + " が起動完了しました"),
+                    color: 5814783,
+                    fields: [
+                        { name: "Public IP", value: $ip, inline: true },
+                        { name: "登録ユーザー数", value: ($users + " 名"), inline: true },
+                        { name: "バックボーン", value: $backbone, inline: true },
+                        { name: "WG Public Key", value: ("`" + $pubkey + "`") }
+                    ],
+                    footer: { text: "WoW Private VPN • SSH完全遮断 (Immutable)" },
+                    timestamp: (now | todate)
+                }]
+            }')
+    else
+        PAYLOAD=$(jq -n \
+            --arg name "$GATEWAY_NAME" \
+            --arg ip "$SERVER_IP" \
+            --arg pubkey "$SERVER_PUB" \
+            --arg backbone "$BACKBONE_NAME" \
+            '{
+                embeds: [{
+                    title: ("🚀 " + $name + " が起動完了しました"),
+                    color: 5814783,
+                    fields: [
+                        { name: "Public IP", value: $ip, inline: true },
+                        { name: "バックボーン", value: $backbone, inline: true },
+                        { name: "WG Public Key", value: ("`" + $pubkey + "`") }
+                    ],
+                    footer: { text: "WoW Private VPN • SSH完全遮断 (Immutable)" },
+                    timestamp: (now | todate)
+                }]
+            }')
+    fi
     curl -s -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$WEBHOOK_URL" || true
 
     # 2. 定期レポートスクリプトの作成 (/usr/local/bin/vpn-reporter.sh)
@@ -161,6 +196,10 @@ if [ -n "$WEBHOOK_URL" ]; then
 #!/bin/bash
 WEBHOOK_URL="$1"
 GATEWAY_NAME="$2"
+GATEWAY_ROLE="$3"
+USER_COUNT="$4"
+BACKBONE_NAME="$5"
+BACKBONE_PUBKEY="$6"
 
 if [ -z "$WEBHOOK_URL" ]; then exit 0; fi
 
@@ -192,14 +231,25 @@ CURRENT_EPOCH=$(date +%s)
         fi
         
         SHORT_KEY="$${pubkey:0:6}...$${pubkey: -4}"
-        REPORT_LINES+="• \`$allowed_ips\` ($SHORT_KEY) | 受信: $${RX_MB}MB / 送信: $${TX_MB}MB | 最終接続: $HS_STR\n"
+        if [ -n "$BACKBONE_PUBKEY" ] && [ "$pubkey" = "$BACKBONE_PUBKEY" ]; then
+            PREFIX="🌐 [バックボーン: $BACKBONE_NAME]"
+        else
+            PREFIX="👤 [ユーザー]"
+        fi
+        REPORT_LINES+="$PREFIX \`$allowed_ips\` ($SHORT_KEY) | 受信: $${RX_MB}MB / 送信: $${TX_MB}MB | 最終接続: $HS_STR\n"
     done < <(echo "$WG_STATUS" | tail -n +2)
 
 if [ -z "$REPORT_LINES" ]; then
     REPORT_LINES="現在登録されているPeerはありません。\n"
 fi
 
-REPORT_CONTENT="**📊 [ $GATEWAY_NAME 定期レポート ]**\n登録Peer数: $TOTAL_PEERS 名\n\n$REPORT_LINES"
+if [ "$GATEWAY_ROLE" = "entry" ]; then
+    HEADER="登録ユーザー数: $USER_COUNT 名 | バックボーン: $BACKBONE_NAME"
+else
+    HEADER="バックボーン: $BACKBONE_NAME"
+fi
+
+REPORT_CONTENT="**📊 [ $GATEWAY_NAME 定期レポート ]**\n$HEADER\n\n$REPORT_LINES"
 
 JSON_PAYLOAD=$(jq -n --arg content "$REPORT_CONTENT" '{content: $content}')
 curl -s -H "Content-Type: application/json" -X POST -d "$JSON_PAYLOAD" "$WEBHOOK_URL" || true
@@ -208,5 +258,5 @@ REPORTER_EOF
     chmod +x /usr/local/bin/vpn-reporter.sh
 
     # 12時間ごと (JST 09:00, 21:00 / UTC 00:00, 12:00) に自動レポート送信
-    (crontab -l 2>/dev/null || true; echo "0 0,12 * * * /usr/local/bin/vpn-reporter.sh '$WEBHOOK_URL' '$GATEWAY_NAME'") | crontab -
+    (crontab -l 2>/dev/null || true; echo "0 0,12 * * * /usr/local/bin/vpn-reporter.sh '$WEBHOOK_URL' '$GATEWAY_NAME' '$GATEWAY_ROLE' '$USER_COUNT' '$BACKBONE_NAME' '$BACKBONE_PUBKEY'") | crontab -
 fi

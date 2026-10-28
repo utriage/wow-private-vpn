@@ -28,11 +28,12 @@ locals {
 
   # 2. オレゴン出口ノード (東京の Peer として登録)
   #    WoWの全宛先 (local.wow_ip_ranges) をオレゴンへ AWS バックボーン経由で中継
+  #    ※Lightsail user_data の 16KB 上限対策のため、プレースホルダー __WOW_ROUTES__ を用い起動スクリプト内で動的置換
   oregon_gateway_peer = var.enable_oregon ? [
     {
       name                 = "Oregon-Exit-Gateway"
       public_key           = var.oregon_server_public_key
-      allowed_ips          = join(", ", concat(["10.0.1.0/24"], local.wow_ip_ranges))
+      allowed_ips          = "__WOW_ROUTES__"
       endpoint             = "${aws_lightsail_static_ip.oregon_ip[0].ip_address}:51820"
       persistent_keepalive = 25
     }
@@ -73,11 +74,15 @@ resource "aws_lightsail_instance" "tokyo" {
   # 起動時オプション (Immutable 自動セットアップ & ログ通知)
   user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
     gateway_name        = "WoW Tokyo Entry Gateway"
+    gateway_role        = "entry"
     server_private_key  = var.tokyo_server_private_key
     vpn_ip_cidr         = "10.0.0.1/24"
     peers               = local.tokyo_all_peers
-    discord_webhook_url = var.tokyo_discord_webhook_url
-    allowed_dest_cidrs  = local.wow_ip_ranges
+    user_count          = length(local.client_peers)
+    backbone_name       = var.enable_oregon ? "Oregon Exit Gateway" : "なし (単体構成)"
+    backbone_pubkey     = var.enable_oregon ? var.oregon_server_public_key : ""
+    discord_webhook_url  = var.tokyo_discord_webhook_url
+    compressed_wow_cidrs = base64gzip(join("\n", local.wow_ip_ranges))
   })
 }
 
@@ -141,11 +146,15 @@ resource "aws_lightsail_instance" "oregon" {
   # 起動時オプション (Immutable 自動セットアップ & ログ通知)
   user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
     gateway_name        = "WoW Oregon Exit Gateway"
+    gateway_role        = "exit"
     server_private_key  = var.oregon_server_private_key
     vpn_ip_cidr         = "10.0.1.1/24"
     peers               = local.oregon_all_peers
-    discord_webhook_url = var.oregon_discord_webhook_url
-    allowed_dest_cidrs  = local.wow_ip_ranges
+    user_count          = 0
+    backbone_name       = "Tokyo Entry Gateway"
+    backbone_pubkey     = var.tokyo_server_public_key
+    discord_webhook_url  = var.oregon_discord_webhook_url
+    compressed_wow_cidrs = base64gzip(join("\n", local.wow_ip_ranges))
   })
 }
 
