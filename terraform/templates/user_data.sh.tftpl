@@ -4,7 +4,7 @@ set -e
 # パッケージ更新 & 必須ツールの非対話インストール
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y wireguard iptables iptables-persistent curl jq
+apt-get install -y wireguard iptables iptables-persistent ipset curl jq
 
 # IPフォワーディング (パケット転送) の有効化
 sysctl -w net.ipv4.ip_forward=1
@@ -17,6 +17,69 @@ SERVER_IP=$(curl -s https://checkip.amazonaws.com)
 # WireGuard ディレクトリの準備
 mkdir -p /etc/wireguard
 chmod 700 /etc/wireguard
+
+# ===================================================================
+# Blizzard / WoW 宛先用 ipset (ハッシュセット) の構築
+# ===================================================================
+ipset create wow_targets hash:net -exist
+%{ for cidr in allowed_dest_cidrs ~}
+ipset add wow_targets ${cidr} -exist
+%{ endfor ~}
+
+mkdir -p /etc/iptables
+ipset save -file /etc/iptables/ipsets
+
+# ===================================================================
+# 防御用 PostUp / PostDown ファイアウォールスクリプトの作成
+# ===================================================================
+cat <<'POSTUP_EOF' > /etc/wireguard/post-up.sh
+#!/bin/bash
+NET_IF=$(ip route get 8.8.8.8 | awk -- '{print $5}')
+
+# ipset がメモリ上にない場合は復元
+if ! ipset list wow_targets >/dev/null 2>&1; then
+    if [ -f /etc/iptables/ipsets ]; then
+        ipset restore < /etc/iptables/ipsets
+    fi
+fi
+
+# 1. 接続追跡 (戻りパケット) の最優先許可 (Site-to-Site 中継戻りパケットの保護)
+iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+# 2. TCP MSS 最適化 (MTU不一致によるパケット詰まり・フラグメンテーション防止)
+iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+
+# 3. クライアント間アイソレーション (Client Isolation)
+#    メンバーPC宛て (10.0.0.0/24) への wg0 内パケット中継を即時 DROP (仲間PCの保護)
+iptables -A FORWARD -i wg0 -o wg0 -d 10.0.0.0/24 -j DROP
+
+# 4. サーバー側エグレスフィルタリング (Egress Filtering / 踏み台化・不正プロキシ化防止)
+#    wg0 から外部インターネット ($NET_IF) への通信のうち、
+#    宛先が Blizzard / WoW (wow_targets) 以外は即時 DROP (DNS は例外許可)
+iptables -A FORWARD -i wg0 -o $NET_IF -p udp --dport 53 -j ACCEPT
+iptables -A FORWARD -i wg0 -o $NET_IF -p tcp --dport 53 -j ACCEPT
+iptables -A FORWARD -i wg0 -o $NET_IF -m set ! --match-set wow_targets dst -j DROP
+
+# 5. 許可されたパケットのフォワーディング & NAT (MASQUERADE)
+iptables -A FORWARD -i wg0 -j ACCEPT
+iptables -t nat -A POSTROUTING -o $NET_IF -j MASQUERADE
+POSTUP_EOF
+chmod 700 /etc/wireguard/post-up.sh
+
+cat <<'POSTDOWN_EOF' > /etc/wireguard/post-down.sh
+#!/bin/bash
+NET_IF=$(ip route get 8.8.8.8 | awk -- '{print $5}')
+
+iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu || true
+iptables -D FORWARD -i wg0 -o wg0 -d 10.0.0.0/24 -j DROP || true
+iptables -D FORWARD -i wg0 -o $NET_IF -p udp --dport 53 -j ACCEPT || true
+iptables -D FORWARD -i wg0 -o $NET_IF -p tcp --dport 53 -j ACCEPT || true
+iptables -D FORWARD -i wg0 -o $NET_IF -m set ! --match-set wow_targets dst -j DROP || true
+iptables -D FORWARD -i wg0 -j ACCEPT || true
+iptables -D FORWARD -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT || true
+iptables -t nat -D POSTROUTING -o $NET_IF -j MASQUERADE || true
+POSTDOWN_EOF
+chmod 700 /etc/wireguard/post-down.sh
 
 # サーバー秘密鍵・公開鍵の設定
 SERVER_PRIV="${server_private_key}"
@@ -39,9 +102,9 @@ Address = ${vpn_ip_cidr}
 ListenPort = 51820
 PrivateKey = $SERVER_PRIV
 
-# 起動・停止時の iptables NAT 設定 (インターフェース間中継 & TCP MSS 最適化)
-PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o $NET_IF -j MASQUERADE; iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o $NET_IF -j MASQUERADE; iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+# 起動・停止時のセキュアファイアウォール & NAT 制御
+PostUp = /etc/wireguard/post-up.sh
+PostDown = /etc/wireguard/post-down.sh
 
 %{ for peer in peers ~}
 # --- Peer: ${peer.name} ---

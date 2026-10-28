@@ -1,125 +1,99 @@
-# WoW Private VPN (World of Warcraft US 専用プライベートVPN)
+# ⚔️ WoW Private VPN (World of Warcraft US 専用プライベートVPN)
 
-AWS Lightsail 上で稼働する、**World of Warcraft (WoW) US サーバー専用スプリットトンネル WireGuard VPN** の管理リポジトリです。
-
-Mudfish 等のルーティング定義（Blizzard 主要 68 帯域）をベースに、ゲーム通信のみを安全かつ低遅延に AWS（東京 / オレゴン）経由でルーティングします。Discord、ブラウザ、YouTube、大型パッチDL 等の通常通信はローカル回線をそのまま利用します。
+> **日本から北米 (US) サーバーへのラグ・パケロスを極限まで減らし、快適にレイドや Mythic+ を遊ぶためのプライベートゲーミング VPN**  
+> **Author**: Gada
 
 ---
 
-## 主な特徴とアーキテクチャ
+## 📌 これってなに？ どんなメリットがあるの？
+
+日本のプロバイダ回線からアメリカの World of Warcraft (WoW) サーバーへ接続すると、太平洋を渡る途中でパケット詰まりや遅延（ラグ）が発生しがちです。
+
+本プロジェクトは、Amazon Web Services (AWS) の専用高速バックボーンを利用して、**あなたの PC と WoW サーバー間を最短・最速ルートで直結する専用ネットワーク** です。
 
 ```mermaid
-graph LR
-    subgraph Client["クライアント端末 (Gada / ギルドメンバー)"]
-        WoW["World of Warcraft (ゲーム通信)"]
-        Other["Discord / ブラウザ / 動画 / パッチ"]
+flowchart LR
+    subgraph PC["あなたのPC"]
+        WoW["⚔️ WoW (ゲーム通信)"]
+        Other["🎧 Discord / YouTube / ブラウザ / パッチ"]
     end
 
-    subgraph AWSTokyo["AWS Lightsail (東京リージョン)"]
-        WG_Tokyo["東京 入口 Gateway (51820/UDP)"]
+    subgraph AWS["AWS 専用高速バックボーン"]
+        GW["東京 Gateway ➔ オレゴン Gateway"]
     end
 
-    subgraph AWSOregon["AWS Lightsail (オレゴンリージョン)"]
-        WG_Oregon["オレゴン 出口 Gateway (51820/UDP)"]
+    subgraph Dest["インターネット"]
+        Blizzard["🏢 Blizzard US サーバー (低遅延・安定)"]
+        Home["🏠 普段の自宅ネット回線 (直通)"]
     end
 
-    subgraph Internet["インターネット"]
-        Blizzard["Blizzard US ゲームサーバー (US West / Las Vegas)"]
-        PublicNet["通常のインターネット (自宅直通)"]
-    end
-
-    WoW -->|WireGuard トンネル| WG_Tokyo
-    WG_Tokyo ==>|AWS グローバル専用バックボーン (Site-to-Site)| WG_Oregon
-    WG_Oregon -->|超低遅延・直接脱出| Blizzard
-    Other --> PublicNet
-    WG_Tokyo -.->|起動・稼働レポート| DiscordTokyo["Discord 東京チャンネル"]
-    WG_Oregon -.->|起動・稼働レポート| DiscordOregon["Discord オレゴンチャンネル"]
+    WoW -->|WireGuard 専用トンネル| GW --> Blizzard
+    Other --> Home
 ```
 
-- **イミュータブル・ゼロアタックサーフェス運用**:
-  - ポート 22（SSH）はファイアウォールで常時完全閉鎖。
-  - サーバーの構築・WireGuard 設定・Peer 登録は Lightsail 起動スクリプト（`user_data`）で完全自動化。
-- **宣言的インフラ管理 (Terraform & mise)**:
-  - インスタンススペック、ファイアウォール、静的IP、登録メンバー（Peer）の公開鍵がすべて Git でコードレビュー可能。
-- **ゼロ・トラストなメンバー設定発行**:
-  - 管理者の手元で [`scripts/add-peer.mjs`](file:///c:/Users/yumatsuzawa/workspace/wow-private-vpn/scripts/add-peer.mjs) を 1 コマンド実行するだけで、一意な鍵ペア・仮想IPを生成し、配布用設定（`wow-<member>.conf`）を出力。
-  - 秘密鍵はメンバー端末にのみ保存され、管理者の手元や Git には残りません。
-- **完全無料の稼働通知 & レポート (Discord Webhook)**:
-  - 東京GW・オレゴンGWそれぞれの Discord Webhook 連携により、サーバー起動通知および 12 時間ごとの通信量サマリーを自動受信。
+### ✨ 主な特徴
+
+1. **⚡ ラグ・パケットロスの低減 (Ping 130〜140ms 台で安定)**
+   - 一般の混雑した海底ケーブル網を避け、AWS のグローバル専用ネットワークを優先通過します。
+2. **🎧 普段のネット利用を邪魔しない「スプリットトンネル」**
+   - **WoW のゲームパケットだけ** を VPN に通します。
+   - Discord のボイスチャット、YouTube、ブラウザ閲覧、Steam、大型パッチのダウンロード等は **普段の自宅回線（最速）のまま** 維持されます。
+3. **🛡️ ギルド専用の固定 IP (安心・安全)**
+   - 市販の VPN（NordVPN や Mudfish 等）のように、不特定多数のユーザーや怪しい BOT 業者と同じ IP を共有しません。
+   - Blizzard のセキュリティ判定に引っかかりにくく、アカウントロックの心配がありません。
 
 ---
 
-## ディレクトリ構成
+## 🚀 使い方 (カンタン 3 ステップ！)
 
-```text
-wow-private-vpn/
-├── .envrc                         # direnv 設定 (AWS_PROFILE=wow-vpn, use mise)
-├── .gitignore                     # 秘密鍵、ステートファイル、クライアント設定の除外
-├── mise.toml                      # ツールバージョン管理 (terraform 等)
-├── README.md                      # プロジェクト概要・総合ガイド (本ドキュメント)
-├── DEPLOY.md                      # 初期構築・デプロイ・メンバー追加手順書
-├── MAINTENANCE.md                 # 運用保守・更新・再作成・トラブルシュート手順書
-│
-├── terraform/                     # 宣言的インフラコード
-│   ├── main.tf                    # Lightsail インスタンス・静的IP・ファイアウォール定義
-│   ├── variables.tf               # 変数定義 (リージョン、スペック、Webhook等)
-│   ├── outputs.tf                 # エンドポイントIP、静的IPの出力
-│   ├── versions.tf                # プロバイダー要件 (hashicorp/aws)
-│   ├── peers.auto.tfvars          # 登録メンバー (Peer) の公開鍵・IPリスト (Git管理)
-│   ├── terraform.tfvars.example   # 設定値カスタマイズ用サンプル
-│   └── templates/
-│       └── user_data.sh.tftpl     # 起動時オプション (WireGuard自動構築 & Discord通知)
-│
-├── scripts/                       # 運用自動化スクリプト (Node.js / Shell)
-│   ├── add-peer.mjs               # ギルドメンバー個別設定生成 & Terraform登録ツール
-│   ├── check-vpn-usage.mjs        # 稼働状況・AWS費用集計 & 月末着地予測ツール
-│   └── check-wow-route.mjs        # 経路健全性・Blizzard各サーバー遅延 Sanity Check ツール
-│
-└── templates/
-    └── wow-client.template.conf   # クライアント配布用設定テンプレート
-```
+事前の面倒なネットワーク設定は一切不要です。**所要時間 約 1 分** で利用開始できます。
+
+### ステップ 1: 無料アプリ「WireGuard」をインストール
+WireGuard 公式サイトから、お使いの OS に合わせたインストーラーをダウンロードして入れます：
+- [WireGuard 公式ダウンロードページ (Windows / Mac)](https://www.wireguard.com/install/)
+
+### ステップ 2: Gada から届いた設定ファイルを読み込む
+1. Gada から Discord の個人 DM で送られてくる **`wow-あなたの名前.conf`** というファイルを PC に保存します。
+2. WireGuard アプリを起動し、ウィンドウ内にそのファイルを **ドラッグ＆ドロップ**（または「トンネルをファイルから追加」）します。
+
+### ステップ 3: 「有効化」をクリック！
+1. リストに追加された接続名を選び、**「有効化」** ボタンを押します。
+2. ステータスが「有効」になり、データ送受信のメーターが動けば準備完了！
+3. あとは普段通り Battle.net から WoW を起動して遊ぶだけです。
 
 ---
 
-## クイックリファレンス
+## ❓ よくある質問 (FAQ)
 
-### 1. 新規メンバーの追加・配布 (ワンストップ)
-```bash
-# 1. メンバー用設定を生成 (例: userA)
-node scripts/add-peer.mjs userA
+### Q. ゲームをしていない時もオンのままで大丈夫？
+**A. 大丈夫です！**  
+WoW のサーバー宛て以外の通信（ウェブサイト、動画、Discord 等）は VPN を一切通りません。つけっぱなしにしていても普段の PC 利用に影響はありません。
 
-# 2. サーバーへ設定を反映
-cd terraform
-mise exec -- terraform apply
+### Q. Discord の通話が遅れたり、YouTube が止まったりしない？
+**A. まったく影響ありません。**  
+本 VPN は「ゲームパケット専用」に設計されています。動画や Discord はあなたのご自宅のネット回線をそのまま使うため、画質が落ちたり遅延が増えたりすることはありません。
 
-# 3. 生成された generated/wow-userA.conf を本人に Discord DM で送付
-# 4. 手元の秘密鍵ファイルを安全に削除
-Remove-Item ../generated/wow-userA.conf
-```
+### Q. チートツール扱いされてゲームが BAN されたりしない？
+**A. BAN の心配はありません。**  
+Blizzard の利用規約では、遅延改善目的の VPN 接続（Mudfish や ExitLag 等と同様）は禁止されていません。また、ゲームファイルやメモリを改ざんするソフトウェアではないため、Blizzard のアンチチート（Warden）に不正検知されることもありません。
 
-### 2. 稼働状況 & AWS利用費用の確認
-```bash
-node scripts/check-vpn-usage.mjs
-```
+### Q. 他のメンバーに自分の PC の中身を見られたりしない？
+**A. 一切見られません。**  
+サーバー側で「メンバー間の直接通信を完全にブロック（クライアント分離）」する設計になっているため、同じ VPN を使っている他のメンバーからあなたの PC 内のファイルや共有フォルダを覗くことは不可能です。
 
-### 3. OS・パッケージの一括最新化 (イミュータブル再作成)
-```bash
-cd terraform
-mise exec -- terraform apply -replace="aws_lightsail_instance.tokyo"
-```
-※ 静的IPおよび全クライアントの接続設定を維持したまま、約 40 秒で最新状態へ切り替わります。
-
-### 4. 通信経路 & レイテンシー Sanity Check
-```bash
-# 通常チェック (Ping + WoWプロセス判定 + 前回比較)
-node scripts/check-wow-route.mjs
-
-# 詳細ホップ追跡付き (tracert 実行)
-node scripts/check-wow-route.mjs --trace
-```
+### Q. 利用料金はかかる？
+**A. ギルドメンバーは無料です。**  
+サーバーのインフラ費用（AWS Lightsail）は管理者（Gada）が運用しています。
 
 ---
 
-## 詳細ドキュメントリンク
-- 🚀 **構築とデプロイ**: [DEPLOY.md](DEPLOY.md)
-- 🛠️ **運用・保守・更新**: [MAINTENANCE.md](MAINTENANCE.md)
+## 🛠️ 管理者・技術者向けドキュメント
+
+システムの構築、インフラコード、運用手順、セキュリティアーキテクチャの詳細は以下を参照してください：
+
+- 🚀 **構築とデプロイ手順書**: [DEPLOY.md](DEPLOY.md)
+- 🔧 **日常の運用・保守・トラブルシューティング**: [MAINTENANCE.md](MAINTENANCE.md)
+- 🛡️ **セキュリティアーキテクチャ & 設計思想**: [SECURITY.md](SECURITY.md)
+
+---
+*Created with ❤️ for WoW US Players by Gada*

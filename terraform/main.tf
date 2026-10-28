@@ -77,6 +77,7 @@ resource "aws_lightsail_instance" "tokyo" {
     vpn_ip_cidr         = "10.0.0.1/24"
     peers               = local.tokyo_all_peers
     discord_webhook_url = var.tokyo_discord_webhook_url
+    allowed_dest_cidrs  = local.wow_ip_ranges
   })
 }
 
@@ -144,6 +145,7 @@ resource "aws_lightsail_instance" "oregon" {
     vpn_ip_cidr         = "10.0.1.1/24"
     peers               = local.oregon_all_peers
     discord_webhook_url = var.oregon_discord_webhook_url
+    allowed_dest_cidrs  = local.wow_ip_ranges
   })
 }
 

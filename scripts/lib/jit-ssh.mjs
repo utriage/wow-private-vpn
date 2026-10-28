@@ -47,17 +47,21 @@ export function runJitSshCommand(instanceName, region = "ap-northeast-1", remote
         // Windows icacls で秘密鍵パーミッション保護
         execSync(`icacls "${keyPath}" /inheritance:r /grant:r "${process.env.USERNAME}:(R)"`, { stdio: "ignore" });
 
-        console.log("   [JIT-SSH] 3. サーバーへ接続し、WireGuard テーブルをホット更新中...");
+        console.log("   [JIT-SSH] 3. サーバーへ接続し、コマンドを実行中...");
         const sshArgs = [
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null",
             "-o", "ConnectTimeout=8",
             "-i", keyPath,
             `${details.username}@${details.ipAddress}`,
-            remoteBashCommands
+            "bash"
         ];
 
-        const res = spawnSync("ssh", sshArgs, { encoding: "utf-8", timeout: 20000 });
+        const res = spawnSync("ssh", sshArgs, {
+            input: remoteBashCommands,
+            encoding: "utf-8",
+            timeout: 60000
+        });
         if (res.status !== 0) {
             throw new Error(`リモートコマンドの実行に失敗しました:\n${res.stderr || res.stdout}`);
         }
