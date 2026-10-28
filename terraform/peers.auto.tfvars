@@ -14,4 +14,9 @@ wireguard_peers = [
     public_key = "iHl70qglIVTXKQS397RlABKoaKADjWGb1rffWmQ2TlA=",
     ip         = "10.0.0.3"
   },
+  {
+    name       = "Popo",
+    public_key = "12PSt7lqq9cUKCSybPf5R/MybJCpZXCV2d/wfBM7Zwo=",
+    ip         = "10.0.0.4"
+  },
 ]
