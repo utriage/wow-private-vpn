@@ -72,7 +72,8 @@ wow-private-vpn/
 │
 ├── scripts/                       # 運用自動化スクリプト (Node.js / Shell)
 │   ├── add-peer.mjs               # ギルドメンバー個別設定生成 & Terraform登録ツール
-│   └── check-vpn-usage.mjs        # 稼働状況・AWS費用集計 & 月末着地予測ツール
+│   ├── check-vpn-usage.mjs        # 稼働状況・AWS費用集計 & 月末着地予測ツール
+│   └── check-wow-route.mjs        # 経路健全性・Blizzard各サーバー遅延 Sanity Check ツール
 │
 └── templates/
     └── wow-client.template.conf   # クライアント配布用設定テンプレート
@@ -107,6 +108,15 @@ cd terraform
 mise exec -- terraform apply -replace="aws_lightsail_instance.tokyo"
 ```
 ※ 静的IPおよび全クライアントの接続設定を維持したまま、約 40 秒で最新状態へ切り替わります。
+
+### 4. 通信経路 & レイテンシー Sanity Check
+```bash
+# 通常チェック (Ping + WoWプロセス判定 + 前回比較)
+node scripts/check-wow-route.mjs
+
+# 詳細ホップ追跡付き (tracert 実行)
+node scripts/check-wow-route.mjs --trace
+```
 
 ---
 
