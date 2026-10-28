@@ -10,28 +10,30 @@ Mudfish 等のルーティング定義（Blizzard 主要 68 帯域）をベー�
 
 ```mermaid
 graph LR
-    subgraph Client["クライアント端末 (ギルドメンバー)"]
+    subgraph Client["クライアント端末 (Gada / ギルドメンバー)"]
         WoW["World of Warcraft (ゲーム通信)"]
         Other["Discord / ブラウザ / 動画 / パッチ"]
     end
 
-    subgraph AWS["AWS Lightsail (東京リージョン)"]
-        WG["WireGuard Gateway (51820/UDP)"]
+    subgraph AWSTokyo["AWS Lightsail (東京リージョン)"]
+        WG_Tokyo["東京 入口 Gateway (51820/UDP)"]
+    end
+
+    subgraph AWSOregon["AWS Lightsail (オレゴンリージョン)"]
+        WG_Oregon["オレゴン 出口 Gateway (51820/UDP)"]
     end
 
     subgraph Internet["インターネット"]
-        Blizzard["Blizzard US ゲームサーバー"]
-        PublicNet["通常のインターネット"]
+        Blizzard["Blizzard US ゲームサーバー (US West / Las Vegas)"]
+        PublicNet["通常のインターネット (自宅直通)"]
     end
 
-    subgraph Monitoring["通知・管理"]
-        Discord["Discord チャンネル (Webhook)"]
-    end
-
-    WoW -->|スプリットトンネル (暗号化)| WG
-    WG --> Blizzard
+    WoW -->|WireGuard トンネル| WG_Tokyo
+    WG_Tokyo ==>|AWS グローバル専用バックボーン (Site-to-Site)| WG_Oregon
+    WG_Oregon -->|超低遅延・直接脱出| Blizzard
     Other --> PublicNet
-    WG -.->|起動通知 / 12h定期レポート| Discord
+    WG_Tokyo -.->|起動・稼働レポート| DiscordTokyo["Discord 東京チャンネル"]
+    WG_Oregon -.->|起動・稼働レポート| DiscordOregon["Discord オレゴンチャンネル"]
 ```
 
 - **イミュータブル・ゼロアタックサーフェス運用**:
