@@ -39,15 +39,21 @@ Address = ${vpn_ip_cidr}
 ListenPort = 51820
 PrivateKey = $SERVER_PRIV
 
-# 起動・停止時の iptables NAT 設定
-PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o $NET_IF -j MASQUERADE
-PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o $NET_IF -j MASQUERADE
+# 起動・停止時の iptables NAT 設定 (インターフェース間中継 & TCP MSS 最適化)
+PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o $NET_IF -j MASQUERADE; iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o $NET_IF -j MASQUERADE; iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 
 %{ for peer in peers ~}
 # --- Peer: ${peer.name} ---
 [Peer]
 PublicKey = ${peer.public_key}
-AllowedIPs = ${peer.ip}/32
+AllowedIPs = ${peer.allowed_ips}
+%{ if try(peer.endpoint, "") != "" ~}
+Endpoint = ${peer.endpoint}
+%{ endif ~}
+%{ if try(peer.persistent_keepalive, 0) > 0 ~}
+PersistentKeepalive = ${peer.persistent_keepalive}
+%{ endif ~}
 
 %{ endfor ~}
 EOF

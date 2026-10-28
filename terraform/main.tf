@@ -12,6 +12,49 @@ provider "aws" {
 }
 
 # ===================================================================
+# ローカル変数: 東京 ⇆ オレゴン間 Site-to-Site 中継 & ピア定義
+# ===================================================================
+locals {
+  # 1. ギルドメンバー (クライアント) を peers オブジェクトリストに正規化
+  client_peers = [
+    for p in var.wireguard_peers : {
+      name                 = p.name
+      public_key           = p.public_key
+      allowed_ips          = "${p.ip}/32"
+      endpoint             = ""
+      persistent_keepalive = 0
+    }
+  ]
+
+  # 2. オレゴン出口ノード (東京の Peer として登録)
+  #    WoWの全宛先 (local.wow_ip_ranges) をオレゴンへ AWS バックボーン経由で中継
+  oregon_gateway_peer = var.enable_oregon ? [
+    {
+      name                 = "Oregon-Exit-Gateway"
+      public_key           = var.oregon_server_public_key
+      allowed_ips          = join(", ", concat(["10.0.1.0/24"], local.wow_ip_ranges))
+      endpoint             = "${aws_lightsail_static_ip.oregon_ip[0].ip_address}:51820"
+      persistent_keepalive = 25
+    }
+  ] : []
+
+  # 3. 東京入口ノード (オレゴンの Peer として登録)
+  #    東京および全メンバーの仮想IP帯 (10.0.0.0/24) からの受信を許可
+  tokyo_gateway_peer = [
+    {
+      name                 = "Tokyo-Entry-Gateway"
+      public_key           = var.tokyo_server_public_key
+      allowed_ips          = "10.0.0.0/24"
+      endpoint             = "${aws_lightsail_static_ip.tokyo_ip.ip_address}:51820"
+      persistent_keepalive = 25
+    }
+  ]
+
+  tokyo_all_peers  = concat(local.client_peers, local.oregon_gateway_peer)
+  oregon_all_peers = local.tokyo_gateway_peer
+}
+
+# ===================================================================
 # 1. 東京サーバー (入口ノード - ユーザー接続用)
 # ===================================================================
 resource "aws_lightsail_instance" "tokyo" {
@@ -27,7 +70,7 @@ resource "aws_lightsail_instance" "tokyo" {
     gateway_name        = "WoW Tokyo Entry Gateway"
     server_private_key  = var.tokyo_server_private_key
     vpn_ip_cidr         = "10.0.0.1/24"
-    peers               = var.wireguard_peers
+    peers               = local.tokyo_all_peers
     discord_webhook_url = var.tokyo_discord_webhook_url
   })
 }
@@ -89,7 +132,7 @@ resource "aws_lightsail_instance" "oregon" {
     gateway_name        = "WoW Oregon Exit Gateway"
     server_private_key  = var.oregon_server_private_key
     vpn_ip_cidr         = "10.0.1.1/24"
-    peers               = []
+    peers               = local.oregon_all_peers
     discord_webhook_url = var.oregon_discord_webhook_url
   })
 }

@@ -59,11 +59,23 @@ variable "tokyo_server_private_key" {
   sensitive   = true
 }
 
+variable "tokyo_server_public_key" {
+  type        = string
+  description = "東京 (入口) サーバーの固定 WireGuard 公開鍵"
+  default     = "UCHCm4aSdxgCfm/Ge2/vUJNWf/KlRjGL9fgP11cq6xQ="
+}
+
 variable "oregon_server_private_key" {
   type        = string
   description = "オレゴン (出口) サーバーの固定 WireGuard 秘密鍵"
   default     = ""
   sensitive   = true
+}
+
+variable "oregon_server_public_key" {
+  type        = string
+  description = "オレゴン (出口) サーバーの固定 WireGuard 公開鍵"
+  default     = "JScRhMN4INdPmBiTuNmozlAafV9rknPI2XnqXSpbNSA="
 }
 
 variable "tokyo_discord_webhook_url" {
