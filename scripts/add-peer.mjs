@@ -48,11 +48,15 @@ function parseExistingPeers() {
 }
 
 function main() {
-    const args = process.argv.slice(2);
+    const rawArgs = process.argv.slice(2);
+    const isForce = rawArgs.includes("--force");
+    const args = rawArgs.filter((a) => a !== "--force");
+
     if (args.length < 1) {
-        console.log("使い方: node scripts/add-peer.mjs <メンバー名> [IP末尾番号 (2〜254)]");
+        console.log("使い方: node scripts/add-peer.mjs <メンバー名> [IP末尾番号 (2〜254)] [--force]");
         console.log("例:     node scripts/add-peer.mjs playerA");
         console.log("        node scripts/add-peer.mjs playerB 5");
+        console.log("        node scripts/add-peer.mjs playerA --force (既存の鍵を再生成)");
         process.exit(1);
     }
 
@@ -63,13 +67,17 @@ function main() {
     }
 
     const wgExe = findWgExe();
-    const existingPeers = parseExistingPeers();
+    let existingPeers = parseExistingPeers();
+    let prevIp = null;
 
-    for (const p of existingPeers) {
-        if (p.name === memberName) {
-            console.error(`エラー: メンバー '${memberName}' は既に登録されています (IP: ${p.ip})。`);
+    const existingIndex = existingPeers.findIndex((p) => p.name === memberName);
+    if (existingIndex !== -1) {
+        if (!isForce) {
+            console.error(`エラー: メンバー '${memberName}' は既に登録されています (IP: ${existingPeers[existingIndex].ip})。再生成する場合は --force を指定してください。`);
             process.exit(1);
         }
+        prevIp = existingPeers[existingIndex].ip;
+        existingPeers.splice(existingIndex, 1);
     }
 
     const usedIps = new Set(existingPeers.map((p) => p.ip));
@@ -86,6 +94,8 @@ function main() {
             console.error(`エラー: IP '${clientIp}' は既に使用されています。`);
             process.exit(1);
         }
+    } else if (prevIp && !usedIps.has(prevIp)) {
+        clientIp = prevIp;
     } else {
         for (let i = 2; i <= 254; i++) {
             const candidate = `10.0.0.${i}`;
@@ -137,10 +147,10 @@ function main() {
     const tmpl = fs.readFileSync(templateFile, "utf-8");
 
     const confContent = tmpl
-        .replace("<CLIENT_VPN_IP>", `${clientIp}/32`)
-        .replace("<CLIENT_PRIVATE_KEY>", clientPriv)
-        .replace("<SERVER_PUBLIC_KEY>", serverPub)
-        .replace("<SERVER_PUBLIC_IP>", serverIp);
+        .replaceAll("<CLIENT_VPN_IP>", `${clientIp}/32`)
+        .replaceAll("<CLIENT_PRIVATE_KEY>", clientPriv)
+        .replaceAll("<SERVER_PUBLIC_KEY>", serverPub)
+        .replaceAll("<SERVER_PUBLIC_IP>", serverIp);
 
     fs.writeFileSync(outConf, confContent, "utf-8");
 
