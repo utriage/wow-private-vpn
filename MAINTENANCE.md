@@ -30,6 +30,24 @@ node scripts/check-wow-route.mjs
 node scripts/check-vpn-usage.mjs
 ```
 
+### Blizzard IP レンジの最新同期 & 集約（大型パッチ時・年1回推奨）
+Blizzard 公式 BGP（AS57976, AS393278）から最新プレフィックスを取得し、Supernetting（包括集約）を行って定義を更新します。
+```bash
+# 1. 最新プレフィックスの取得 & ルーティング自動集約
+node scripts/update-blizzard-routes.mjs
+
+# 2. 稼働中サーバー (東京・オレゴン) への無停止ホット適用
+node scripts/apply-security-hardening.mjs
+
+# 3. 健全性の確認 (130ms台・ロス0%の確認)
+node scripts/check-wow-route.mjs
+
+# 4. Git にルーティング更新をコミット
+git add terraform/wow_routes.tf templates/wow-client.template.conf
+git commit -m "feat(routes): sync and aggregate Blizzard IP ranges from BGP"
+```
+※ クライアント設定は大きな包括ブロック（`/16` や `/18` 等）で集約されているため、細かなサブネット変更に伴うメンバー側での設定再インポートは不要です。
+
 ---
 
 ## 2. 定期 OS・パッケージ更新 (イミュータブル再作成)
