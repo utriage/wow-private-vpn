@@ -19,7 +19,9 @@
 
 ## 2. 前提条件と環境準備
 
-- **Terraform**: v1.5.0 以上（インストール済み）
+- **direnv & mise**: winget 等で導入済み（ツールバージョン管理）
+  - 本リポジトリでは `mise.toml` により Terraform 等のツールバージョンが宣言されています。
+  - ディレクトリ移動時に `direnv allow` または `mise install` を実行することで、指定バージョン（`terraform 1.16.6`）が自動適用されます。
 - **AWS CLI**: v2.x（インストール済み）
 - **SSH クライアント**: OpenSSH 等
 
