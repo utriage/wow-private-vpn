@@ -44,6 +44,11 @@ resource "aws_lightsail_static_ip_attachment" "tokyo_attach" {
 resource "aws_lightsail_instance_public_ports" "tokyo_ports" {
   instance_name = aws_lightsail_instance.tokyo.name
 
+  # インスタンス再作成時にポート設定が確実に連動適用されるよう保証
+  lifecycle {
+    replace_triggered_by = [aws_lightsail_instance.tokyo]
+  }
+
   # WireGuard 通信用 UDP ポート (唯一の常時開放ポート)
   port_info {
     protocol   = "udp"
@@ -106,6 +111,11 @@ resource "aws_lightsail_instance_public_ports" "oregon_ports" {
   count         = var.enable_oregon ? 1 : 0
   provider      = aws.oregon
   instance_name = aws_lightsail_instance.oregon[0].name
+
+  # インスタンス再作成時にポート設定が確実に連動適用されるよう保証
+  lifecycle {
+    replace_triggered_by = [aws_lightsail_instance.oregon[0]]
+  }
 
   # WireGuard トンネル通信用 UDP ポート
   port_info {
