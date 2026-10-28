@@ -1,0 +1,143 @@
+#!/bin/bash
+set -e
+
+# パッケージ更新 & 必須ツールの非対話インストール
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y wireguard iptables iptables-persistent curl jq
+
+# IPフォワーディング (パケット転送) の有効化
+sysctl -w net.ipv4.ip_forward=1
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-wireguard.conf
+
+# ネットワークインターフェース名およびパブリックIPの取得
+NET_IF=$(ip route get 8.8.8.8 | awk -- '{print $5}')
+SERVER_IP=$(curl -s https://checkip.amazonaws.com)
+
+# WireGuard ディレクトリの準備
+mkdir -p /etc/wireguard
+chmod 700 /etc/wireguard
+
+# サーバー秘密鍵・公開鍵の設定
+SERVER_PRIV="${server_private_key}"
+if [ -z "$SERVER_PRIV" ]; then
+    if [ ! -f /etc/wireguard/server_private.key ]; then
+        wg genkey > /etc/wireguard/server_private.key
+    fi
+    SERVER_PRIV=$(cat /etc/wireguard/server_private.key)
+else
+    echo "$SERVER_PRIV" > /etc/wireguard/server_private.key
+fi
+chmod 600 /etc/wireguard/server_private.key
+SERVER_PUB=$(echo "$SERVER_PRIV" | wg pubkey)
+echo "$SERVER_PUB" > /etc/wireguard/server_public.key
+
+# /etc/wireguard/wg0.conf の生成
+cat <<EOF > /etc/wireguard/wg0.conf
+[Interface]
+Address = ${vpn_ip_cidr}
+ListenPort = 51820
+PrivateKey = $SERVER_PRIV
+
+# 起動・停止時の iptables NAT 設定
+PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o $NET_IF -j MASQUERADE
+PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o $NET_IF -j MASQUERADE
+
+%{ for peer in peers ~}
+# --- Peer: ${peer.name} ---
+[Peer]
+PublicKey = ${peer.public_key}
+AllowedIPs = ${peer.ip}/32
+
+%{ endfor ~}
+EOF
+
+chmod 600 /etc/wireguard/wg0.conf
+
+# サービスの起動 & 自動起動登録
+systemctl enable --now wg-quick@wg0
+
+# ===================================================================
+# Discord Webhook 連携 (起動完了通知 & 定期レポート)
+# ===================================================================
+WEBHOOK_URL="${discord_webhook_url}"
+GATEWAY_NAME="${gateway_name}"
+
+if [ -n "$WEBHOOK_URL" ]; then
+    PEER_COUNT="${length(peers)}"
+
+    # 1. 起動完了通知の送信
+    PAYLOAD=$(jq -n \
+        --arg name "$GATEWAY_NAME" \
+        --arg ip "$SERVER_IP" \
+        --arg pubkey "$SERVER_PUB" \
+        --arg peers "$PEER_COUNT" \
+        '{
+            embeds: [{
+                title: ("🚀 " + $name + " が起動完了しました"),
+                color: 5814783,
+                fields: [
+                    { name: "Public IP", value: $ip, inline: true },
+                    { name: "登録Peer数", value: ($peers + " 名"), inline: true },
+                    { name: "WG Public Key", value: ("`" + $pubkey + "`") }
+                ],
+                footer: { text: "WoW Private VPN • SSH完全遮断 (Immutable)" },
+                timestamp: (now | todate)
+            }]
+        }')
+    curl -s -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$WEBHOOK_URL" || true
+
+    # 2. 定期レポートスクリプトの作成 (/usr/local/bin/vpn-reporter.sh)
+    cat <<'REPORTER_EOF' > /usr/local/bin/vpn-reporter.sh
+#!/bin/bash
+WEBHOOK_URL="$1"
+GATEWAY_NAME="$2"
+
+if [ -z "$WEBHOOK_URL" ]; then exit 0; fi
+
+WG_STATUS=$(sudo wg show wg0 dump 2>/dev/null || true)
+if [ -z "$WG_STATUS" ]; then exit 0; fi
+
+TOTAL_PEERS=$(echo "$WG_STATUS" | tail -n +2 | wc -l)
+CURRENT_EPOCH=$(date +%s)
+
+    REPORT_LINES=""
+    while IFS=$'\t' read -r pubkey psk endpoint allowed_ips latest_handshake transfer_rx transfer_tx keepalive; do
+        if [ -z "$pubkey" ]; then continue; fi
+        RX_MB=$(( transfer_rx / 1024 / 1024 ))
+        TX_MB=$(( transfer_tx / 1024 / 1024 ))
+        
+        if [ "$latest_handshake" -gt 0 ]; then
+            DIFF=$(( CURRENT_EPOCH - latest_handshake ))
+            if [ "$DIFF" -lt 60 ]; then
+                HS_STR="$${DIFF}秒前 (オンライン)"
+            elif [ "$DIFF" -lt 3600 ]; then
+                HS_STR="$(( DIFF / 60 ))分前"
+            elif [ "$DIFF" -lt 86400 ]; then
+                HS_STR="$(( DIFF / 3600 ))時間前"
+            else
+                HS_STR="$(( DIFF / 86400 ))日前"
+            fi
+        else
+            HS_STR="未接続"
+        fi
+        
+        SHORT_KEY="$${pubkey:0:6}...$${pubkey: -4}"
+        REPORT_LINES+="• \`$allowed_ips\` ($SHORT_KEY) | 受信: $${RX_MB}MB / 送信: $${TX_MB}MB | 最終接続: $HS_STR\n"
+    done < <(echo "$WG_STATUS" | tail -n +2)
+
+if [ -z "$REPORT_LINES" ]; then
+    REPORT_LINES="現在登録されているPeerはありません。\n"
+fi
+
+REPORT_CONTENT="**📊 [ $GATEWAY_NAME 定期レポート ]**\n登録Peer数: $TOTAL_PEERS 名\n\n$REPORT_LINES"
+
+JSON_PAYLOAD=$(jq -n --arg content "$REPORT_CONTENT" '{content: $content}')
+curl -s -H "Content-Type: application/json" -X POST -d "$JSON_PAYLOAD" "$WEBHOOK_URL" || true
+REPORTER_EOF
+
+    chmod +x /usr/local/bin/vpn-reporter.sh
+
+    # 12時間ごと (JST 09:00, 21:00 / UTC 00:00, 12:00) に自動レポート送信
+    (crontab -l 2>/dev/null || true; echo "0 0,12 * * * /usr/local/bin/vpn-reporter.sh '$WEBHOOK_URL' '$GATEWAY_NAME'") | crontab -
+fi

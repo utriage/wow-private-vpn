@@ -21,6 +21,15 @@ resource "aws_lightsail_instance" "tokyo" {
   bundle_id         = var.bundle_id
   ip_address_type   = "dualstack"
   tags              = var.tags
+
+  # 起動時オプション (Immutable 自動セットアップ & ログ通知)
+  user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
+    gateway_name        = "WoW Tokyo Entry Gateway"
+    server_private_key  = var.tokyo_server_private_key
+    vpn_ip_cidr         = "10.0.0.1/24"
+    peers               = var.wireguard_peers
+    discord_webhook_url = var.tokyo_discord_webhook_url
+  })
 }
 
 resource "aws_lightsail_static_ip" "tokyo_ip" {
@@ -35,7 +44,7 @@ resource "aws_lightsail_static_ip_attachment" "tokyo_attach" {
 resource "aws_lightsail_instance_public_ports" "tokyo_ports" {
   instance_name = aws_lightsail_instance.tokyo.name
 
-  # WireGuard 通信用 UDP ポート
+  # WireGuard 通信用 UDP ポート (唯一の常時開放ポート)
   port_info {
     protocol   = "udp"
     from_port  = 51820
@@ -44,22 +53,16 @@ resource "aws_lightsail_instance_public_ports" "tokyo_ports" {
     ipv6_cidrs = ["::/0"]
   }
 
-  # SSH 管理用 TCP ポート
-  port_info {
-    protocol   = "tcp"
-    from_port  = 22
-    to_port    = 22
-    cidrs      = var.allowed_ssh_cidrs
-    ipv6_cidrs = ["::/0"]
-  }
-
-  # Lightsail デフォルト開放 HTTP ポート
-  port_info {
-    protocol   = "tcp"
-    from_port  = 80
-    to_port    = 80
-    cidrs      = ["0.0.0.0/0"]
-    ipv6_cidrs = ["::/0"]
+  # 緊急メンテナンス時のみ開放可能な SSH ポート (通常時は閉鎖)
+  dynamic "port_info" {
+    for_each = var.enable_ssh ? [1] : []
+    content {
+      protocol   = "tcp"
+      from_port  = 22
+      to_port    = 22
+      cidrs      = var.allowed_ssh_cidrs
+      ipv6_cidrs = ["::/0"]
+    }
   }
 }
 
@@ -75,6 +78,15 @@ resource "aws_lightsail_instance" "oregon" {
   bundle_id         = var.bundle_id
   ip_address_type   = "dualstack"
   tags              = var.tags
+
+  # 起動時オプション (Immutable 自動セットアップ & ログ通知)
+  user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
+    gateway_name        = "WoW Oregon Exit Gateway"
+    server_private_key  = var.oregon_server_private_key
+    vpn_ip_cidr         = "10.0.1.1/24"
+    peers               = []
+    discord_webhook_url = var.oregon_discord_webhook_url
+  })
 }
 
 resource "aws_lightsail_static_ip" "oregon_ip" {
@@ -104,21 +116,15 @@ resource "aws_lightsail_instance_public_ports" "oregon_ports" {
     ipv6_cidrs = ["::/0"]
   }
 
-  # SSH 管理用 TCP ポート
-  port_info {
-    protocol   = "tcp"
-    from_port  = 22
-    to_port    = 22
-    cidrs      = var.allowed_ssh_cidrs
-    ipv6_cidrs = ["::/0"]
-  }
-
-  # Lightsail デフォルト開放 HTTP ポート
-  port_info {
-    protocol   = "tcp"
-    from_port  = 80
-    to_port    = 80
-    cidrs      = ["0.0.0.0/0"]
-    ipv6_cidrs = ["::/0"]
+  # 緊急メンテナンス時のみ開放可能な SSH ポート (通常時は閉鎖)
+  dynamic "port_info" {
+    for_each = var.enable_ssh ? [1] : []
+    content {
+      protocol   = "tcp"
+      from_port  = 22
+      to_port    = 22
+      cidrs      = var.allowed_ssh_cidrs
+      ipv6_cidrs = ["::/0"]
+    }
   }
 }

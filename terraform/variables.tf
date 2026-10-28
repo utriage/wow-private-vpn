@@ -40,10 +40,54 @@ variable "bundle_id" {
   default     = "nano_3_0"
 }
 
+variable "enable_ssh" {
+  type        = bool
+  description = "SSH接続 (ポート22) を許可するかどうか (通常運用時は false で完全閉鎖)"
+  default     = false
+}
+
 variable "allowed_ssh_cidrs" {
   type        = list(string)
-  description = "SSH接続 (ポート22) を許可するCIDRリスト (運用時は管理者のIPに絞ることを推奨)"
+  description = "enable_ssh=true 時に SSH接続を許可するCIDRリスト"
   default     = ["0.0.0.0/0"]
+}
+
+variable "tokyo_server_private_key" {
+  type        = string
+  description = "東京 (入口) サーバーの固定 WireGuard 秘密鍵"
+  default     = ""
+  sensitive   = true
+}
+
+variable "oregon_server_private_key" {
+  type        = string
+  description = "オレゴン (出口) サーバーの固定 WireGuard 秘密鍵"
+  default     = ""
+  sensitive   = true
+}
+
+variable "tokyo_discord_webhook_url" {
+  type        = string
+  description = "東京GWのログ・稼働通知用 Discord Webhook URL"
+  default     = ""
+  sensitive   = true
+}
+
+variable "oregon_discord_webhook_url" {
+  type        = string
+  description = "オレゴンGWのログ・稼働通知用 Discord Webhook URL"
+  default     = ""
+  sensitive   = true
+}
+
+variable "wireguard_peers" {
+  type = list(object({
+    name       = string
+    public_key = string
+    ip         = string
+  }))
+  description = "登録ギルドメンバー (Peer) の公開鍵・IPリスト"
+  default     = []
 }
 
 variable "tags" {

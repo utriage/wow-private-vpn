@@ -73,46 +73,71 @@ tokyo_wireguard_endpoint = "52.196.xxx.xxx:51820"
 
 ---
 
-## 4. サーバー初期プロビジョニング
+## 4. サーバーの自動初期化 (起動時オプション / SSH不要)
 
-Lightsail インスタンス作成後、SSH 接続して WireGuard サーバーを初期セットアップします。
-
-### ステップ 1: サーバーへ接続
-Lightsail 管理画面の「ブラウザベースの SSH」を使用するか、ローカルから SSH 接続します：
-```bash
-# プロジェクトのデフォルトキーを使用する場合
-aws lightsail get-instance-access-details --instance-name wow-vpn-tokyo --region ap-northeast-1 --profile wow-vpn
-```
-
-### ステップ 2: セットアップスクリプトの実行
-リポジトリ内の `server-setup.sh` をサーバー上で実行します：
-```bash
-# スクリプトをサーバーへ転送またはコピーして実行
-chmod +x server-setup.sh
-sudo ./server-setup.sh
-```
-このスクリプトにより以下が自動実行されます：
-- パッケージインストール（`wireguard`, `iptables`, `iptables-persistent`）
+本構成では、Lightsail の起動スクリプト（`user_data`）により以下がインスタンス起動時に**完全自動で実行**されます。手動での SSH ログインや設定コマンドの実行は不要です：
+- パッケージインストール（`wireguard`, `iptables`, `iptables-persistent`, `curl`, `jq`）
 - Linux カーネルの IP フォワーディング有効化
-- サーバー鍵ペアの生成および `/etc/wireguard/wg0.conf` の生成
-- WireGuard サービスの起動 & OS 起動時自動立ち上げ（`systemctl enable wg-quick@wg0`）
+- サーバー鍵ペアの配置および `/etc/wireguard/wg0.conf` の自動生成（登録Peer含む）
+- WireGuard サービスの起動 & OS 起動時自動立ち上げ（`systemctl enable --now wg-quick@wg0`）
+- Discord Webhook への起動完了通知 & 定期レポート用 cron の登録
+
+> [!NOTE]
+> 通常運用時はポート 22（SSH）がファイアウォールで完全に閉鎖されており、インターネットからの不正ログイン・攻撃のリスクがありません。
 
 ---
 
 ## 5. ギルドメンバーのトライアル追加・配布手順
 
-メンバーごとに衝突しない仮想IP（`10.0.0.3`, `10.0.0.4`...）と鍵ペアを発行します。
+管理者の手元環境で個別設定を安全に発行し、Git に秘密鍵を残さずメンバーへ配布するライフサイクルです。
 
-### ステップ 1: メンバー設定の発行
-サーバー上で以下のコマンドを実行します：
-```bash
-# 書式: sudo ./scripts/add_member.sh <メンバー識別名> <IP末尾>
-sudo ./scripts/add_member.sh player1 3
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as 管理者
+    participant Tool as scripts/add_peer.py
+    participant Git as peers.auto.tfvars
+    participant AWS as Lightsail (Terraform)
+    actor Member as ギルドメンバー
+
+    Admin->>Tool: python scripts/add_peer.py userA
+    Note over Tool: クライアント鍵ペア生成<br/>空き仮想IP (例: 10.0.0.3) 割り当て
+    Tool-->>Admin: generated/wow-userA.conf 出力
+    Tool->>Git: 公開鍵とIPを peers.auto.tfvars に追記
+    Admin->>AWS: mise exec -- terraform apply
+    Note over AWS: サーバーへ userA の Peer 登録反映
+    Admin->>Member: wow-userA.conf を Discord DM で直接送付
+    Admin->>Admin: Remove-Item generated/wow-userA.conf (手元から削除)
+    Note over Member: クライアントは .conf を保持する限り<br/>永続的にVPN利用可能
 ```
-- 実行結果として `/etc/wireguard/clients/wow-player1.conf` が生成され、サーバーの稼働中 WireGuard インターフェースに即座に Peer が追加されます（**サーバー再起動不要**）。
 
-### ステップ 2: 設定ファイルの安全な配布
-1. 生成された `wow-player1.conf` を取り出します：
+### ステップ 1: 設定ファイルの生成
+ローカル端末のプロジェクトルートで以下を実行します：
+```bash
+# 書式: python scripts/add_peer.py <メンバー名> [IP末尾番号 (2〜254)]
+python scripts/add_peer.py player1
+```
+- `generated/wow-player1.conf`（秘密鍵入り配布用設定）が手元に1ファイルだけ生成されます。
+- `terraform/peers.auto.tfvars` にメンバー名・公開鍵・仮想IPが自動追記されます。
+
+### ステップ 2: サーバーへの反映
+```bash
+cd terraform
+mise exec -- terraform apply
+```
+- 変更差分を確認し、`yes` で適用します。
+- サーバーが新しい Peer 設定を読み込み、即座に通信可能になります。
+
+### ステップ 3: メンバーへの安全な配布
+- `generated/wow-player1.conf` を Discord の 1対1 ダイレクトメッセージ等のセキュアなチャネルでメンバーへ直接送付します。
+
+### ステップ 4: 手元ファイルの安全な削除
+送付完了後、手元の秘密鍵ファイルを削除します：
+```powershell
+Remove-Item generated/wow-player1.conf
+```
+- クライアント用秘密鍵はメンバー端末にのみ存在し、管理者の手元や Git リポジトリには残りません。
+- メンバー側でファイルを保持している限り永続的に利用可能です（紛失時は `peers.auto.tfvars` から削除し、再発行します）。
    ```bash
    cat /etc/wireguard/clients/wow-player1.conf
    ```

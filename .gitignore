@@ -20,6 +20,7 @@ crash.log
 crash.*.log
 *.tfvars
 !terraform.tfvars.example
+!peers.auto.tfvars
 override.tf
 override.tf.json
 *_override.tf

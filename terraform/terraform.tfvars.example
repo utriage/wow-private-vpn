@@ -11,5 +11,19 @@ oregon_az     = "us-west-2a"
 bundle_id    = "nano_3_0"
 blueprint_id = "ubuntu_24_04"
 
-# SSHアクセス制限 (管理者のグローバルIP/32を指定することを推奨)
+# SSHアクセス制限 (通常は false でポート22完全遮断、緊急調査時のみ true)
+enable_ssh = false
 # allowed_ssh_cidrs = ["203.0.113.10/32"]
+
+# -------------------------------------------------------------------
+# Discord Webhook 通知設定 (東京用・オレゴン用を個別に設定可能)
+# 空文字列の場合は Webhook 送信をスキップします
+# -------------------------------------------------------------------
+# tokyo_discord_webhook_url  = "https://discord.com/api/webhooks/xxxx/yyyy"
+# oregon_discord_webhook_url = "https://discord.com/api/webhooks/aaaa/bbbb"
+
+# -------------------------------------------------------------------
+# サーバー固定秘密鍵 (未指定時は起動時に自動生成されますが、再作成時の鍵固定を推奨)
+# -------------------------------------------------------------------
+# tokyo_server_private_key  = "<TOKYO_SERVER_PRIVATE_KEY>"
+# oregon_server_private_key = "<OREGON_SERVER_PRIVATE_KEY>"
