@@ -29,6 +29,7 @@ override.tf.json
 # WireGuard keys & generated client configs
 server_*.key
 wireguard-log*.txt
+.route-sanity-history.json
 client_*.key
 *.conf
 !*.template.conf
