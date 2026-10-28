@@ -104,7 +104,7 @@ sudo systemctl restart wg-quick@wg0
 ### 1. 通信実績・コスト予測の確認
 プロジェクト管理者のローカル端末で、リポジトリ内の監視スクリプトを実行します：
 ```bash
-python scripts/check_vpn_usage.py
+node scripts/check-vpn-usage.mjs
 ```
 - 各インスタンスの転送量（付属1TB内の利用状況）
 - Lightsail 稼働ステータス

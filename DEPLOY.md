@@ -95,12 +95,12 @@ tokyo_wireguard_endpoint = "52.196.xxx.xxx:51820"
 sequenceDiagram
     autonumber
     actor Admin as 管理者
-    participant Tool as scripts/add_peer.py
+    participant Tool as scripts/add-peer.mjs
     participant Git as peers.auto.tfvars
     participant AWS as Lightsail (Terraform)
     actor Member as ギルドメンバー
 
-    Admin->>Tool: python scripts/add_peer.py userA
+    Admin->>Tool: node scripts/add-peer.mjs userA
     Note over Tool: クライアント鍵ペア生成<br/>空き仮想IP (例: 10.0.0.3) 割り当て
     Tool-->>Admin: generated/wow-userA.conf 出力
     Tool->>Git: 公開鍵とIPを peers.auto.tfvars に追記
@@ -114,8 +114,8 @@ sequenceDiagram
 ### ステップ 1: 設定ファイルの生成
 ローカル端末のプロジェクトルートで以下を実行します：
 ```bash
-# 書式: python scripts/add_peer.py <メンバー名> [IP末尾番号 (2〜254)]
-python scripts/add_peer.py player1
+# 書式: node scripts/add-peer.mjs <メンバー名> [IP末尾番号 (2〜254)]
+node scripts/add-peer.mjs player1
 ```
 - `generated/wow-player1.conf`（秘密鍵入り配布用設定）が手元に1ファイルだけ生成されます。
 - `terraform/peers.auto.tfvars` にメンバー名・公開鍵・仮想IPが自動追記されます。
