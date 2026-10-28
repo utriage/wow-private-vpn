@@ -1,9 +1,3 @@
-variable "aws_profile" {
-  type        = string
-  description = "AWS CLIプロファイル名 (環境変数で認証する場合は null)"
-  default     = null
-}
-
 variable "primary_region" {
   type        = string
   description = "東京 (入口) サーバーのデプロイ先リージョン (選択されたリージョン)"

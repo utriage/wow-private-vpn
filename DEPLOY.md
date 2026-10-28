@@ -31,7 +31,7 @@
 aws login --profile wow-vpn
 ```
 > [!NOTE]
-> 認証状態は `~/.aws/config` のプロファイル設定に基づきます。本プロジェクトの選択されたリージョン（東京: `ap-northeast-1`）が使用されます。
+> リポジトリ内の `.envrc` に `export AWS_PROFILE=wow-vpn` が設定されているため、デフォルトプロファイルへの誤適用を防ぎ、Terraform や AWS CLI は常に `wow-vpn` プロファイルを参照します。認証状態は `~/.aws/config` のプロファイル設定に基づき、本プロジェクトの選択されたリージョン（東京: `ap-northeast-1`）が使用されます。
 
 ---
 

@@ -1,16 +1,14 @@
 # -------------------------------------------------------------------
 # AWS プロバイダー設定
-# 認証情報はコードに含めず、ローカルの AWS CLI プロファイルを参照します
+# プロファイルは .envrc (AWS_PROFILE=wow-vpn) より自動解決されます
 # -------------------------------------------------------------------
 provider "aws" {
-  region  = var.primary_region
-  profile = var.aws_profile
+  region = var.primary_region
 }
 
 provider "aws" {
-  alias   = "oregon"
-  region  = var.oregon_region
-  profile = var.aws_profile
+  alias  = "oregon"
+  region = var.oregon_region
 }
 
 # ===================================================================
