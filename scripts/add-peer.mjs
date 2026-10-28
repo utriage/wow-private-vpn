@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { execFileSync } from "child_process";
+import { runJitSshCommand } from "./lib/jit-ssh.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -178,6 +179,24 @@ function main() {
 
     fs.writeFileSync(peersFile, tfvarsOutput, "utf-8");
 
+    // 5. 稼働中の東京サーバーへ JIT ホット適用 (Zero-Downtime)
+    console.log("");
+    console.log("[5. 稼働中サーバーへの無停止ホット適用]");
+    let hotApplied = false;
+    try {
+        const remoteCmd = [
+            `sudo wg set wg0 peer ${clientPub} allowed-ips ${clientIp}/32`,
+            `if ! grep -q "${clientPub}" /etc/wireguard/wg0.conf; then echo -e "\\n# --- Peer: ${memberName} ---\\n[Peer]\\nPublicKey = ${clientPub}\\nAllowedIPs = ${clientIp}/32" | sudo tee -a /etc/wireguard/wg0.conf > /dev/null; fi`
+        ].join(" && ");
+
+        runJitSshCommand("wow-vpn-tokyo", "ap-northeast-1", remoteCmd);
+        hotApplied = true;
+        console.log(`   ★ サーバーへ即座に反映されました！ (再起動不要・切断ゼロ)`);
+    } catch (e) {
+        console.warn(`   ⚠️ リモートホット適用をスキップしました (${e.message})。`);
+        console.warn(`   peers.auto.tfvars への追記は完了しています。次回サーバー起動時に復元されます。`);
+    }
+
     console.log("");
     console.log("=".repeat(66));
     console.log(` ★ メンバー [${memberName}] の設定ファイル生成が完了しました！`);
@@ -185,17 +204,17 @@ function main() {
     console.log(` 1. 生成ファイル   : generated/wow-${memberName}.conf`);
     console.log(` 2. 割り当て仮想IP : ${clientIp}/32`);
     console.log(` 3. 公開鍵登録先   : terraform/peers.auto.tfvars (追記完了)`);
+    console.log(` 4. サーバー反映   : ${hotApplied ? "🟢 無停止ホット反映完了 (即時接続可能)" : "未反映"}`);
     console.log("-".repeat(66));
     console.log("【管理者の次の作業手順】");
-    console.log(" ① サーバー設定の反映 (デプロイ):");
-    console.log("    mise exec -- terraform apply");
-    console.log("    (※ サーバーに新しいPeerが反映され、通信可能になります)");
-    console.log("");
-    console.log(" ② メンバーへの個別配布:");
+    console.log(" ① メンバーへの個別配布:");
     console.log(`    generated/wow-${memberName}.conf を対象メンバーに Discord DM 等で送信`);
     console.log("");
-    console.log(" ③ 手元ファイルの安全な削除:");
+    console.log(" ② 手元ファイルの安全な削除:");
     console.log(`    Remove-Item generated/wow-${memberName}.conf`);
+    console.log("");
+    console.log(" ③ Gitコミット (構成管理):");
+    console.log(`    git add terraform/peers.auto.tfvars && git commit -m "feat(vpn): add peer ${memberName}"`);
     console.log("=".repeat(66));
 }
 

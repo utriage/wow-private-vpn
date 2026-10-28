@@ -65,6 +65,11 @@ resource "aws_lightsail_instance" "tokyo" {
   ip_address_type   = "dualstack"
   tags              = var.tags
 
+  # 日々のピア追加・更新によるインスタンス再作成（切断）を抑止
+  lifecycle {
+    ignore_changes = [user_data]
+  }
+
   # 起動時オプション (Immutable 自動セットアップ & ログ通知)
   user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
     gateway_name        = "WoW Tokyo Entry Gateway"
@@ -126,6 +131,11 @@ resource "aws_lightsail_instance" "oregon" {
   bundle_id         = var.bundle_id
   ip_address_type   = "dualstack"
   tags              = var.tags
+
+  # 日々のピア追加・更新によるインスタンス再作成（切断）を抑止
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 
   # 起動時オプション (Immutable 自動セットアップ & ログ通知)
   user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
