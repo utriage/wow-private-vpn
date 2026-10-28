@@ -1,7 +1,7 @@
 variable "aws_profile" {
   type        = string
-  description = "AWS CLIプロファイル名 (認証情報のコード露出を防ぎ、ローカルセッションを利用します)"
-  default     = "wow-vpn"
+  description = "AWS CLIプロファイル名 (環境変数で認証する場合は null)"
+  default     = null
 }
 
 variable "primary_region" {
@@ -55,8 +55,5 @@ variable "allowed_ssh_cidrs" {
 variable "tags" {
   type        = map(string)
   description = "リソースに付与する共通タグ"
-  default = {
-    Project     = "wow-private-vpn"
-    Environment = "trial"
-  }
+  default     = {}
 }
