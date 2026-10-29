@@ -272,39 +272,62 @@ if [ -z "$METRICS_SUMMARY" ]; then
 fi
 
 # 2. WireGuard ピア通信状況の集計
-REPORT_LINES=""
+# バックボーンピアは詳細表示、一般ユーザーは24h接続人数の集計として集約
+BACKBONE_LINE=""
+TOTAL_USERS=0
+ACTIVE_USERS_24H=0
+ONLINE_USERS=0
+
 while IFS=$'\t' read -r pubkey psk endpoint allowed_ips latest_handshake transfer_rx transfer_tx keepalive; do
     if [ -z "$pubkey" ]; then continue; fi
     RX_MB=$(( transfer_rx / 1024 / 1024 ))
     TX_MB=$(( transfer_tx / 1024 / 1024 ))
     
-    if [ "$latest_handshake" -gt 0 ]; then
-        DIFF=$(( CURRENT_EPOCH - latest_handshake ))
-        if [ "$DIFF" -lt 60 ]; then
-            HS_STR="$${DIFF}秒前 (オンライン)"
-        elif [ "$DIFF" -lt 3600 ]; then
-            HS_STR="$(( DIFF / 60 ))分前"
-        elif [ "$DIFF" -lt 86400 ]; then
-            HS_STR="$(( DIFF / 3600 ))時間前"
-        else
-            HS_STR="$(( DIFF / 86400 ))日前"
-        fi
-    else
-        HS_STR="未接続"
-    fi
-    
-    SHORT_KEY="$${pubkey:0:6}...$${pubkey: -4}"
     if [ -n "$BACKBONE_PUBKEY" ] && [ "$pubkey" = "$BACKBONE_PUBKEY" ]; then
-        PREFIX="🌐 [バックボーン: $BACKBONE_NAME]"
-        # バックボーンの AllowedIPs は中継ルートが膨大なため主要CIDRのみ抜粋
+        if [ "$latest_handshake" -gt 0 ]; then
+            DIFF=$(( CURRENT_EPOCH - latest_handshake ))
+            if [ "$DIFF" -lt 60 ]; then
+                HS_STR="$${DIFF}秒前 (オンライン)"
+            elif [ "$DIFF" -lt 3600 ]; then
+                HS_STR="$(( DIFF / 60 ))分前"
+            elif [ "$DIFF" -lt 86400 ]; then
+                HS_STR="$(( DIFF / 3600 ))時間前"
+            else
+                HS_STR="$(( DIFF / 86400 ))日前"
+            fi
+        else
+            HS_STR="未接続"
+        fi
+        SHORT_KEY="$${pubkey:0:6}...$${pubkey: -4}"
         FIRST_IP=$(echo "$allowed_ips" | awk -F',' '{print $1}')
-        DISPLAY_IPS="$FIRST_IP (+ WoW中継帯域)"
+        if echo "$allowed_ips" | grep -q ","; then
+            DISPLAY_IPS="$FIRST_IP (+ WoW中継帯域)"
+        else
+            DISPLAY_IPS="$allowed_ips"
+        fi
+        BACKBONE_LINE="• 🌐 [バックボーン: $BACKBONE_NAME]"$'\n'"  \`$DISPLAY_IPS\` ($SHORT_KEY) | 受信: $${RX_MB}MB / 送信: $${TX_MB}MB | 最終接続: $HS_STR"
     else
-        PREFIX="👤 [ユーザー]"
-        DISPLAY_IPS="$allowed_ips"
+        TOTAL_USERS=$(( TOTAL_USERS + 1 ))
+        if [ "$latest_handshake" -gt 0 ]; then
+            DIFF=$(( CURRENT_EPOCH - latest_handshake ))
+            if [ "$DIFF" -le 86400 ]; then
+                ACTIVE_USERS_24H=$(( ACTIVE_USERS_24H + 1 ))
+            fi
+            if [ "$DIFF" -lt 180 ]; then
+                ONLINE_USERS=$(( ONLINE_USERS + 1 ))
+            fi
+        fi
     fi
-    REPORT_LINES+="$PREFIX \`$DISPLAY_IPS\` ($SHORT_KEY) | 受信: $${RX_MB}MB / 送信: $${TX_MB}MB | 最終接続: $HS_STR"$'\n'
 done < <(echo "$WG_STATUS" | tail -n +2)
+
+REPORT_LINES=""
+if [ -n "$BACKBONE_LINE" ]; then
+    REPORT_LINES+="$BACKBONE_LINE"$'\n'
+fi
+
+if [ "$TOTAL_USERS" -gt 0 ]; then
+    REPORT_LINES+="• 👤 ユーザー接続: 直近24h **$${ACTIVE_USERS_24H} 名** (登録 $${TOTAL_USERS} 名 / 現在オンライン $${ONLINE_USERS} 名)"$'\n'
+fi
 
 if [ -z "$REPORT_LINES" ]; then
     REPORT_LINES="現在登録されているPeerはありません。"$'\n'
