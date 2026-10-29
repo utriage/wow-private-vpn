@@ -191,7 +191,38 @@ if [ -n "$WEBHOOK_URL" ]; then
     fi
     curl -s -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$WEBHOOK_URL" || true
 
-    # 2. 定期レポートスクリプトの作成 (/usr/local/bin/vpn-reporter.sh)
+    # 2. システムメトリクス収集スクリプトの作成 (/usr/local/bin/vpn-metric-collector.sh)
+    cat <<'COLLECTOR_EOF' > /usr/local/bin/vpn-metric-collector.sh
+#!/bin/bash
+LOG_FILE="/var/log/vpn-metrics.log"
+NOW=$(date +%s)
+
+# Load Average (1分値)
+LOAD=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo "0.00")
+
+# CPU使用率 (%)
+CPU=$(top -bn1 | awk -F',' '/Cpu\(s\)/ {for(i=1;i<=NF;i++) if($i~/id/){gsub(/[^0-9.]/,"",$i); printf "%.1f", 100-$i; exit}}' 2>/dev/null)
+if [ -z "$CPU" ]; then CPU="0.0"; fi
+
+# メモリ使用率 (%) - (total - available) / total
+MEM=$(free -m | awk '/Mem:/ {if($2>0) printf "%.1f", (($2-$7)/$2)*100; else print "0.0"}' 2>/dev/null)
+if [ -z "$MEM" ]; then MEM="0.0"; fi
+
+# ストレージ使用率 (%)
+DISK=$(df / | awk 'NR==2 {gsub("%",""); print $5}' 2>/dev/null)
+if [ -z "$DISK" ]; then DISK="0"; fi
+
+echo "$NOW $LOAD $CPU $MEM $DISK" >> "$LOG_FILE"
+
+# 48時間以上前の古いログを自動削除
+CUTOFF=$(( NOW - 172800 ))
+awk -v cutoff="$CUTOFF" '$1 >= cutoff' "$LOG_FILE" > "$LOG_FILE.tmp" 2>/dev/null && mv "$LOG_FILE.tmp" "$LOG_FILE"
+COLLECTOR_EOF
+
+    chmod +x /usr/local/bin/vpn-metric-collector.sh
+    /usr/local/bin/vpn-metric-collector.sh || true
+
+    # 3. 定期レポートスクリプトの作成 (/usr/local/bin/vpn-reporter.sh)
     cat <<'REPORTER_EOF' > /usr/local/bin/vpn-reporter.sh
 #!/bin/bash
 WEBHOOK_URL="$1"
@@ -206,57 +237,111 @@ if [ -z "$WEBHOOK_URL" ]; then exit 0; fi
 WG_STATUS=$(sudo wg show wg0 dump 2>/dev/null || true)
 if [ -z "$WG_STATUS" ]; then exit 0; fi
 
-TOTAL_PEERS=$(echo "$WG_STATUS" | tail -n +2 | wc -l)
 CURRENT_EPOCH=$(date +%s)
+SINCE_24H=$(( CURRENT_EPOCH - 86400 ))
 
-    REPORT_LINES=""
-    while IFS=$'\t' read -r pubkey psk endpoint allowed_ips latest_handshake transfer_rx transfer_tx keepalive; do
-        if [ -z "$pubkey" ]; then continue; fi
-        RX_MB=$(( transfer_rx / 1024 / 1024 ))
-        TX_MB=$(( transfer_tx / 1024 / 1024 ))
-        
-        if [ "$latest_handshake" -gt 0 ]; then
-            DIFF=$(( CURRENT_EPOCH - latest_handshake ))
-            if [ "$DIFF" -lt 60 ]; then
-                HS_STR="$${DIFF}秒前 (オンライン)"
-            elif [ "$DIFF" -lt 3600 ]; then
-                HS_STR="$(( DIFF / 60 ))分前"
-            elif [ "$DIFF" -lt 86400 ]; then
-                HS_STR="$(( DIFF / 3600 ))時間前"
-            else
-                HS_STR="$(( DIFF / 86400 ))日前"
-            fi
+# 初回収集がまだの場合は即時実行
+if [ ! -f /var/log/vpn-metrics.log ]; then
+    /usr/local/bin/vpn-metric-collector.sh 2>/dev/null || true
+fi
+
+# 1. システムメトリクス集計 (直近24h ピーク & 平均)
+METRICS_SUMMARY=$(awk -v since="$SINCE_24H" '
+    $1 >= since {
+        count++
+        load_sum += $2; if (count == 1 || $2 > load_max) load_max = $2
+        cpu_sum  += $3; if (count == 1 || $3 > cpu_max)  cpu_max  = $3
+        mem_sum  += $4; if (count == 1 || $4 > mem_max)  mem_max  = $4
+        cur_disk = $5;  if (count == 1 || $5 > disk_max) disk_max = $5
+    }
+    END {
+        if (count > 0) {
+            printf "• **Load (1m)**: 平均 %.2f / ピーク %.2f\n• **CPU使用率**: 平均 %.1f%% / ピーク %.1f%%\n• **メモリ使用率**: 平均 %.1f%% / ピーク %.1f%%\n• **ストレージ**: 現在 %d%% (ピーク %d%%)",
+                load_sum/count, load_max,
+                cpu_sum/count, cpu_max,
+                mem_sum/count, mem_max,
+                cur_disk, disk_max
+        } else {
+            printf "• メトリクス収集中 (データ蓄積中...)"
+        }
+    }
+' /var/log/vpn-metrics.log 2>/dev/null)
+
+if [ -z "$METRICS_SUMMARY" ]; then
+    METRICS_SUMMARY="• メトリクス取得不可"
+fi
+
+# 2. WireGuard ピア通信状況の集計
+REPORT_LINES=""
+while IFS=$'\t' read -r pubkey psk endpoint allowed_ips latest_handshake transfer_rx transfer_tx keepalive; do
+    if [ -z "$pubkey" ]; then continue; fi
+    RX_MB=$(( transfer_rx / 1024 / 1024 ))
+    TX_MB=$(( transfer_tx / 1024 / 1024 ))
+    
+    if [ "$latest_handshake" -gt 0 ]; then
+        DIFF=$(( CURRENT_EPOCH - latest_handshake ))
+        if [ "$DIFF" -lt 60 ]; then
+            HS_STR="$${DIFF}秒前 (オンライン)"
+        elif [ "$DIFF" -lt 3600 ]; then
+            HS_STR="$(( DIFF / 60 ))分前"
+        elif [ "$DIFF" -lt 86400 ]; then
+            HS_STR="$(( DIFF / 3600 ))時間前"
         else
-            HS_STR="未接続"
+            HS_STR="$(( DIFF / 86400 ))日前"
         fi
-        
-        SHORT_KEY="$${pubkey:0:6}...$${pubkey: -4}"
-        if [ -n "$BACKBONE_PUBKEY" ] && [ "$pubkey" = "$BACKBONE_PUBKEY" ]; then
-            PREFIX="🌐 [バックボーン: $BACKBONE_NAME]"
-        else
-            PREFIX="👤 [ユーザー]"
-        fi
-        REPORT_LINES+="$PREFIX \`$allowed_ips\` ($SHORT_KEY) | 受信: $${RX_MB}MB / 送信: $${TX_MB}MB | 最終接続: $HS_STR\n"
-    done < <(echo "$WG_STATUS" | tail -n +2)
+    else
+        HS_STR="未接続"
+    fi
+    
+    SHORT_KEY="$${pubkey:0:6}...$${pubkey: -4}"
+    if [ -n "$BACKBONE_PUBKEY" ] && [ "$pubkey" = "$BACKBONE_PUBKEY" ]; then
+        PREFIX="🌐 [バックボーン: $BACKBONE_NAME]"
+        # バックボーンの AllowedIPs は中継ルートが膨大なため主要CIDRのみ抜粋
+        FIRST_IP=$(echo "$allowed_ips" | awk -F',' '{print $1}')
+        DISPLAY_IPS="$FIRST_IP (+ WoW中継帯域)"
+    else
+        PREFIX="👤 [ユーザー]"
+        DISPLAY_IPS="$allowed_ips"
+    fi
+    REPORT_LINES+="$PREFIX \`$DISPLAY_IPS\` ($SHORT_KEY) | 受信: $${RX_MB}MB / 送信: $${TX_MB}MB | 最終接続: $HS_STR"$'\n'
+done < <(echo "$WG_STATUS" | tail -n +2)
 
 if [ -z "$REPORT_LINES" ]; then
-    REPORT_LINES="現在登録されているPeerはありません。\n"
+    REPORT_LINES="現在登録されているPeerはありません。"$'\n'
 fi
 
+# 3. 構成情報フィールドの作成
 if [ "$GATEWAY_ROLE" = "entry" ]; then
-    HEADER="登録ユーザー数: $USER_COUNT 名 | バックボーン: $BACKBONE_NAME"
+    CONFIG_INFO="登録ユーザー数: $USER_COUNT 名 | バックボーン: $BACKBONE_NAME"
 else
-    HEADER="バックボーン: $BACKBONE_NAME"
+    CONFIG_INFO="バックボーン: $BACKBONE_NAME"
 fi
 
-REPORT_CONTENT="**📊 [ $GATEWAY_NAME 定期レポート ]**\n$HEADER\n\n$REPORT_LINES"
+# 4. Discord Embed ペイロード構築 & 送信 (Embedで枠線・改行・カラーを完全保護)
+JSON_PAYLOAD=$(jq -n \
+    --arg name "$GATEWAY_NAME" \
+    --arg config "$CONFIG_INFO" \
+    --arg metrics "$METRICS_SUMMARY" \
+    --arg peers "$REPORT_LINES" \
+    '{
+        embeds: [{
+            title: ("📊 " + $name + " 定期レポート"),
+            color: 3066993,
+            fields: [
+                { name: "構成情報", value: $config, inline: false },
+                { name: "🖥️ システムメトリクス (直近24h)", value: $metrics, inline: false },
+                { name: "🔗 WireGuard ピア通信状況", value: $peers, inline: false }
+            ],
+            footer: { text: "WoW Private VPN • SSH完全遮断 (Immutable)" },
+            timestamp: (now | todate)
+        }]
+    }')
 
-JSON_PAYLOAD=$(jq -n --arg content "$REPORT_CONTENT" '{content: $content}')
 curl -s -H "Content-Type: application/json" -X POST -d "$JSON_PAYLOAD" "$WEBHOOK_URL" || true
 REPORTER_EOF
 
     chmod +x /usr/local/bin/vpn-reporter.sh
 
-    # 12時間ごと (JST 09:00, 21:00 / UTC 00:00, 12:00) に自動レポート送信
-    (crontab -l 2>/dev/null || true; echo "0 0,12 * * * /usr/local/bin/vpn-reporter.sh '$WEBHOOK_URL' '$GATEWAY_NAME' '$GATEWAY_ROLE' '$USER_COUNT' '$BACKBONE_NAME' '$BACKBONE_PUBKEY'") | crontab -
+    # 4. crontab 登録 (5分ごとのメトリクス収集 + 12時間ごとの定期レポート送信)
+    (crontab -l 2>/dev/null || true; echo "*/5 * * * * /usr/local/bin/vpn-metric-collector.sh"; echo "0 0,12 * * * /usr/local/bin/vpn-reporter.sh '$WEBHOOK_URL' '$GATEWAY_NAME' '$GATEWAY_ROLE' '$USER_COUNT' '$BACKBONE_NAME' '$BACKBONE_PUBKEY'") | crontab -
 fi
