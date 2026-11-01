@@ -365,6 +365,6 @@ REPORTER_EOF
 
     chmod +x /usr/local/bin/vpn-reporter.sh
 
-    # 4. crontab 登録 (5分ごとのメトリクス収集 + 12時間ごとの定期レポート送信)
-    (crontab -l 2>/dev/null || true; echo "*/5 * * * * /usr/local/bin/vpn-metric-collector.sh"; echo "0 0,12 * * * /usr/local/bin/vpn-reporter.sh '$WEBHOOK_URL' '$GATEWAY_NAME' '$GATEWAY_ROLE' '$USER_COUNT' '$BACKBONE_NAME' '$BACKBONE_PUBKEY'") | crontab -
+    # 4. crontab 登録 (5分ごとのメトリクス収集 + 1日1回 JST 00:30 / UTC 15:30 の定期レポート送信)
+    (crontab -l 2>/dev/null || true; echo "*/5 * * * * /usr/local/bin/vpn-metric-collector.sh"; echo "30 15 * * * /usr/local/bin/vpn-reporter.sh '$WEBHOOK_URL' '$GATEWAY_NAME' '$GATEWAY_ROLE' '$USER_COUNT' '$BACKBONE_NAME' '$BACKBONE_PUBKEY'") | crontab -
 fi

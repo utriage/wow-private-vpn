@@ -85,5 +85,5 @@ node scripts/check-wow-route.mjs
 
 ## 4. 監視とコスト上限
 
-- **定期レポート**: Discord Webhook 宛てに 12 時間おき（JST 09:00, 21:00）に接続状況・転送量サマリーが自動投稿されます。
+- **定期レポート**: Discord Webhook 宛てに 1 日 1 回（JST 00:30 / UTC 15:30、週末Raid終了直後）に接続状況・転送量サマリーが自動投稿されます。
 - **利用上限 (Spend limit)**: 急にアクセス不能（Access Denied 等）になった場合は、[AWS Settings](https://settings.aws.com/) > **Billing** で利用上限ステータスを確認してください。
