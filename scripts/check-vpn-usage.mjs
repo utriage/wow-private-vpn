@@ -3,6 +3,14 @@
  * WoW Private VPN Usage & AWS Cost Reporter (Node.js 版)
  */
 import { execFileSync } from "child_process";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { runJitSshCommand } from "./lib/jit-ssh.mjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const baseDir = path.dirname(__dirname);
 
 function runAws(args) {
     try {
@@ -16,13 +24,70 @@ function runAws(args) {
     }
 }
 
-const now = new Date();
-console.log("=".repeat(60));
-console.log(`  WoW VPN 定期レポート (${now.toISOString().replace("T", " ").substring(0, 19)})`);
-console.log("=".repeat(60));
+// 登録メンバーの公開鍵マップを読み込み
+const peerNames = new Map([
+    ["JScRhMN4INdPmBiTuNmozlAafV9rknPI2XnqXSpbNSA=", "Oregon Relay (オレゴン中継)"],
+    ["UCHCm4aSdxgCfm/Ge2/vUJNWf/KlRjGL9fgP11cq6xQ=", "Tokyo Gateway (東京GW)"]
+]);
 
-// 1. AWS Lightsail Instances State
-console.log("\n[1. AWS Lightsail 稼働状況]");
+const peersFile = path.join(baseDir, "terraform", "peers.auto.tfvars");
+if (fs.existsSync(peersFile)) {
+    const content = fs.readFileSync(peersFile, "utf-8");
+    const regex = /name\s*=\s*"([^"]+)",\s*public_key\s*=\s*"([^"]+)"/g;
+    let match;
+    while ((match = regex.exec(content)) !== null) {
+        peerNames.set(match[2], match[1]);
+    }
+}
+
+const now = new Date();
+console.log("=".repeat(64));
+console.log(`  WoW Private VPN 稼働実績 & コスト月額レポート`);
+console.log(`  集計日時: ${now.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })} (JST)`);
+console.log("=".repeat(64));
+
+// 1. WireGuard 通信実績 (JIT-SSH経由)
+const skipSsh = process.argv.includes("--no-ssh") || process.argv.includes("--quick");
+if (!skipSsh) {
+    console.log("\n[1. WireGuard 転送量実績 (最新実測値)]");
+
+    const servers = [
+        { name: "wow-vpn-tokyo", region: "ap-northeast-1", label: "東京ゲートウェイ (入口)" },
+        { name: "wow-vpn-uswest2", region: "us-west-2", label: "オレゴンサーバー (出口)" }
+    ];
+
+    for (const s of servers) {
+        console.log(`\n --- ${s.label} [${s.name} / ${s.region}] ---`);
+        try {
+            const rawWg = runJitSshCommand(s.name, s.region, "sudo wg show");
+            const lines = rawWg.split("\n");
+            let currentPeer = "";
+            let currentPeerName = "";
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith("interface:")) {
+                    console.log(`  Interface: ${trimmed.split(":")[1].trim()}`);
+                } else if (trimmed.startsWith("peer:")) {
+                    currentPeer = trimmed.split(":")[1].trim();
+                    currentPeerName = peerNames.get(currentPeer) || "Unknown Peer";
+                    console.log(`\n  * ピア: ${currentPeerName} (${currentPeer})`);
+                } else if (trimmed.startsWith("endpoint:")) {
+                    console.log(`    - 接続元: ${trimmed.split(":")[1].trim()}`);
+                } else if (trimmed.startsWith("latest handshake:")) {
+                    console.log(`    - 最新通信: ${trimmed.split(":")[1].trim()}`);
+                } else if (trimmed.startsWith("transfer:")) {
+                    console.log(`    - 転送量実績: ${trimmed.split(":")[1].trim()}`);
+                }
+            }
+        } catch (e) {
+            console.warn(`  ⚠️ JIT-SSH 通信取得スキップ (${e.message})`);
+        }
+    }
+}
+
+// 2. AWS Lightsail 稼働状況
+console.log("\n[2. AWS Lightsail インスタンス稼働状態]");
 const targets = [
     { name: "wow-vpn-tokyo", region: "ap-northeast-1" },
     { name: "wow-vpn-uswest2", region: "us-west-2" },
@@ -36,11 +101,12 @@ for (const t of targets) {
         "--output", "json",
     ]);
     const state = data?.state?.name || "unknown";
-    console.log(`   - ${t.name} (${t.region}): 稼働状態 = ${state}`);
+    const statusIcon = state === "running" ? "🟢" : "🔴";
+    console.log(`   ${statusIcon} ${t.name} (${t.region}): ${state}`);
 }
 
-// 2. AWS Cost Explorer API (Actual & Forecast Cost)
-console.log("\n[2. AWS Cost Explorer コスト集計 & 月末予測 (API)]");
+// 3. AWS Cost Explorer API (Actual & Forecast Cost)
+console.log("\n[3. AWS Cost Explorer コスト集計 & 月末予測 (API)]");
 
 const year = now.getFullYear();
 const month = now.getMonth() + 1;
@@ -90,13 +156,13 @@ if (forecastData?.Total?.Amount) {
     console.log("   * 月末予測 (Forecast): データ蓄積中 (数日間の履歴データ蓄積後に自動反映されます)");
 }
 
-console.log("\n   [料金プラン内訳]");
-console.log("   * 東京インスタンス: $0.00 (初回3か月無料枠適用)");
-console.log("   * オレゴンインスタンス: $5.00 / 月 (約 780 円)");
-console.log("   * データ転送量: 付属1TB内 (追加課金なし $0.00)");
-console.log("   * 静的IP (2個): アタッチ中無料 ($0.00)");
-console.log("   --------------------------------------------------");
-console.log("   * 3か月間の想定請求額: 約 $5.00 / 月");
-console.log("   * 4か月目以降 (定常)  : 約 $10.00 / 月");
+console.log("\n[4. 想定月額コスト試算と内訳 (定常)]");
+console.log("   * 東京インスタンス (nano/micro): $0.00 (初回3か月無料枠適用)");
+console.log("   * オレゴンインスタンス (micro) : $5.00 / 月 (約 780 円)");
+console.log("   * データ転送量 (各1TB付属)   : $0.00 (1TB以内は完全無料)");
+console.log("   * 静的IPアドレス (2個)        : $0.00 (インスタンス紐付け中無料)");
+console.log("   " + "-".repeat(50));
+console.log("   * 現在（開設後3か月間）の請求想定: 約 $5.00 / 月 (約 780 円)");
+console.log("   * 4か月目以降（定常運用時）の請求: 約 $10.00 / 月 (約 1,560 円)");
 
-console.log("\n" + "=".repeat(60));
+console.log("\n" + "=".repeat(64));
